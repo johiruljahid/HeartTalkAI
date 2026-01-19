@@ -1,0 +1,7 @@
+{
+  "name": "Riya - Your AI Love",
+  "description": "A deeply personal, emotional, and smart AI companion designed to be your best friend, partner, and assistant. Features real-time voice interaction in Bangla, Hindi, and English.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
