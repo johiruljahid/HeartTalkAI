@@ -105,13 +105,23 @@ const Dashboard: React.FC<DashboardProps> = ({ user, onLogout }) => {
   const isPending = currentUser.subscription?.status === 'pending';
   const isConnected = connectionState === ConnectionState.CONNECTED;
   const guestCount = currentUser.guestUsageCount || 0;
+  const guestCallsLeft = Math.max(0, 2 - guestCount);
 
   const handleConnect = async () => {
     if (isPending) return;
+    
+    // GUEST LIMIT LOGIC
     if (currentUser.role === 'guest') {
-        if (guestCount >= 2) { setShowGuestLimit(true); return; }
-        DB.updateUser({ ...currentUser, guestUsageCount: guestCount + 1 });
+        if (guestCount >= 2) { 
+            setShowGuestLimit(true); 
+            return; 
+        }
+        // Increment usage count locally and in DB
+        const updatedUser = { ...currentUser, guestUsageCount: guestCount + 1 };
+        DB.updateUser(updatedUser);
+        setCurrentUser(updatedUser);
     }
+
     if (currentUser.role === 'free' && !isPending) { setShowPayment(true); return; }
     if (navigator.vibrate) navigator.vibrate([30, 10, 30]);
     await StayAliveService.start(() => handleDisconnect());
@@ -124,7 +134,11 @@ const Dashboard: React.FC<DashboardProps> = ({ user, onLogout }) => {
       switch(connectionState) {
           case ConnectionState.CONNECTED: return isSpeaking ? "Riya is talking..." : "Riya is listening...";
           case ConnectionState.CONNECTING: return "Connecting...";
-          default: return currentUser.role === 'guest' ? `Guest Call (${2 - guestCount} left)` : "Tap to start conversation";
+          default: 
+            if (currentUser.role === 'guest') {
+                return guestCallsLeft > 0 ? `Guest Access (${guestCallsLeft} calls left)` : "Guest Limit Reached";
+            }
+            return "Tap to start conversation";
       }
   };
 
@@ -177,9 +191,9 @@ const Dashboard: React.FC<DashboardProps> = ({ user, onLogout }) => {
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-black/95 backdrop-blur-xl animate-fade-in">
           <div className="bg-gray-900 border border-pink-500/30 w-full max-w-sm rounded-[2.5rem] p-10 text-center shadow-2xl">
             <h2 className="text-2xl font-black text-white mb-4">Guest Limit Reached!</h2>
-            <p className="text-gray-400 text-sm mb-10">You have used your guest calls. To continue talking with Riya, please create an account.</p>
-            <button onClick={onLogout} className="w-full bg-pink-600 text-white font-bold py-4 rounded-2xl active:scale-95">Create Account</button>
-            <button onClick={() => setShowGuestLimit(false)} className="w-full py-3 text-gray-500 mt-2">Maybe Later</button>
+            <p className="text-gray-400 text-sm mb-10">You have used your 2 free guest calls. To continue talking with Riya, please create a free account.</p>
+            <button onClick={onLogout} className="w-full bg-pink-600 text-white font-bold py-4 rounded-2xl active:scale-95 hover:bg-pink-500 transition-colors shadow-lg shadow-pink-900/40">Create Account (Free)</button>
+            <button onClick={() => setShowGuestLimit(false)} className="w-full py-3 text-gray-500 mt-2 hover:text-white transition-colors">Close</button>
           </div>
         </div>
       )}

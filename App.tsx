@@ -12,6 +12,8 @@ const App: React.FC = () => {
   useEffect(() => {
     // Subscribe to Firebase Auth State
     const unsubscribe = DB.subscribeToAuth((authUser) => {
+        // If authUser is found via listener, update state.
+        // If it returns null (e.g. initial load or logout), set null.
         setUser(authUser);
         setLoading(false);
     });
@@ -36,6 +38,11 @@ const App: React.FC = () => {
     setUser(null);
   };
 
+  const handleLoginSuccess = (u: UserProfile) => {
+    setUser(u);
+    setLoading(false);
+  };
+
   if (loading) {
     return (
         <div className="h-screen w-full bg-black flex items-center justify-center">
@@ -50,7 +57,7 @@ const App: React.FC = () => {
   return (
     <div className="antialiased text-gray-100 font-quicksand">
       {!user ? (
-        <Login onLogin={() => {}} /> 
+        <Login onLogin={handleLoginSuccess} /> 
       ) : (
         <Dashboard user={user} onLogout={handleLogout} />
       )}

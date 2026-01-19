@@ -5,10 +5,10 @@ import { DB } from '../services/db';
 import AdminPanel from './AdminPanel';
 
 interface LoginProps {
-  onLogin: (user: UserProfile) => void; // Kept for prop compatibility, but App.tsx handles state via auth listener
+  onLogin: (user: UserProfile) => void;
 }
 
-const Login: React.FC<LoginProps> = () => {
+const Login: React.FC<LoginProps> = ({ onLogin }) => {
   const [mode, setMode] = useState<'login' | 'register'>('login');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -24,10 +24,15 @@ const Login: React.FC<LoginProps> = () => {
     setLoading(true);
     setError('');
     try {
-        await DB.loginAsGuest();
-        // App.tsx auth listener will handle the rest
+        const guestUser = await DB.loginAsGuest();
+        onLogin(guestUser);
     } catch (err: any) {
-        setError("Guest login failed: " + err.message);
+        console.error("Guest Login Error:", err);
+        if (err.code === 'auth/operation-not-allowed') {
+            setError("Error: Please enable 'Anonymous' sign-in in Firebase Console.");
+        } else {
+            setError("Guest login failed. Check connection.");
+        }
         setLoading(false);
     }
   };
@@ -39,15 +44,17 @@ const Login: React.FC<LoginProps> = () => {
 
     try {
         if (mode === 'login') {
-            await DB.login(email, password);
+            const user = await DB.login(email, password);
+            onLogin(user);
         } else {
             if (!name || !age || !email || !password) {
                 throw new Error('All fields are required');
             }
-            await DB.register(email, password, {
+            const newUser = await DB.register(email, password, {
                 name: name.trim(),
                 age: age.trim(),
             });
+            onLogin(newUser);
         }
     } catch (err: any) {
         let msg = err.message;
@@ -145,10 +152,16 @@ const Login: React.FC<LoginProps> = () => {
           <button 
             onClick={handleGuestAccess}
             disabled={loading}
-            className="mt-6 w-full bg-white/5 border border-white/10 hover:bg-white/10 text-gray-300 font-medium py-3 rounded-xl transition-colors text-sm flex items-center justify-center gap-2"
+            className="mt-6 w-full bg-white/5 border border-white/10 hover:bg-white/10 text-gray-300 font-medium py-3 rounded-xl transition-colors text-sm flex items-center justify-center gap-2 group"
           >
-             {loading && <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>}
-            Continue as Guest (Limited)
+             {loading ? (
+                <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
+             ) : (
+                <>
+                  <span>Continue as Guest</span>
+                  <span className="text-xs bg-white/10 px-2 py-0.5 rounded text-gray-400 group-hover:text-white transition-colors">No Account</span>
+                </>
+             )}
           </button>
         </div>
       </div>
