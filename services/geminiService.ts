@@ -68,7 +68,7 @@ const addEventTool: FunctionDeclaration = {
     type: Type.OBJECT,
     properties: {
       title: { type: Type.STRING, description: "What is the event? (e.g. 'My Birthday')" },
-      date: { type: Type.STRING, description: "Date of event (e.g. '15th August')" },
+      date: { type: Type.STRING, date: "Date of event (e.g. '15th August')" },
       type: { type: Type.STRING, enum: ['birthday', 'meeting', 'anniversary', 'other'] }
     },
     required: ["title", "date", "type"]
@@ -103,11 +103,8 @@ export class GeminiService {
 
   private currentUser: UserProfile | null = null;
   private isIntentionalDisconnect = false;
-  private heartbeatInterval: any = null;
-  private watchdogInterval: any = null;
   private lastMessageTimestamp = 0;
 
-  // Added for "Speak First" feature
   private silenceTimeout: any = null;
   private hasUserSpoken = false;
 
@@ -126,21 +123,16 @@ export class GeminiService {
     try {
       this.ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
-      // Low latency mode for faster response
-      if (!this.inputAudioContext || this.inputAudioContext.state === 'closed') {
-        this.inputAudioContext = new (window.AudioContext || (window as any).webkitAudioContext)({ 
-            sampleRate: 16000, 
-            latencyHint: 'interactive' 
-        });
-      }
-      if (!this.outputAudioContext || this.outputAudioContext.state === 'closed') {
-        this.outputAudioContext = new (window.AudioContext || (window as any).webkitAudioContext)({ 
-            sampleRate: 24000,
-            latencyHint: 'interactive'
-        });
-      }
+      // Using 'interactive' latency hint for ultra-low latency response
+      this.inputAudioContext = new (window.AudioContext || (window as any).webkitAudioContext)({ 
+        sampleRate: 16000,
+        latencyHint: 'interactive'
+      });
+      this.outputAudioContext = new (window.AudioContext || (window as any).webkitAudioContext)({ 
+        sampleRate: 24000,
+        latencyHint: 'interactive'
+      });
 
-      // Important: Resume context immediately on user gesture click
       await this.inputAudioContext.resume();
       await this.outputAudioContext.resume();
 
@@ -188,34 +180,14 @@ export class GeminiService {
         },
       });
 
-      this.watchdogInterval = setInterval(async () => {
-        if (this.isIntentionalDisconnect) return;
-        if (this.inputAudioContext?.state === 'suspended') await this.inputAudioContext.resume();
-        if (this.outputAudioContext?.state === 'suspended') await this.outputAudioContext.resume();
-        if (Date.now() - this.lastMessageTimestamp > 25000) this.sendHeartbeat();
-      }, 5000);
-
-      this.heartbeatInterval = setInterval(() => this.sendHeartbeat(), 10000);
-
     } catch (err: any) {
       console.error("Connection Error:", err);
-      this.callbacks.onError("Link failed. Check mic.");
+      this.callbacks.onError("Link failed.");
       this.callbacks.onStateChange(ConnectionState.ERROR);
     }
   }
 
-  private sendHeartbeat() {
-    this.sessionPromise?.then(session => {
-        if (!this.isIntentionalDisconnect) {
-            const silentFrame = new Int16Array(100).fill(0);
-            session.sendRealtimeInput({ media: { data: this.encode(new Uint8Array(silentFrame.buffer)), mimeType: 'audio/pcm;rate=16000' } });
-        }
-    }).catch(() => {});
-  }
-
-  // Helper: Force the model to speak by simulating a user text input
   private sendTextTrigger(text: string) {
-    console.log("Sending Text Trigger:", text);
     this.sessionPromise?.then(session => {
         session.sendRealtimeInput({
             content: [{ role: 'user', parts: [{ text: text }] }]
@@ -226,15 +198,12 @@ export class GeminiService {
   public async disconnect() {
     this.isIntentionalDisconnect = true;
     if (this.silenceTimeout) clearTimeout(this.silenceTimeout);
-    if (this.watchdogInterval) clearInterval(this.watchdogInterval);
-    if (this.heartbeatInterval) clearInterval(this.heartbeatInterval);
     if (this.inputSource) this.inputSource.mediaStream.getTracks().forEach(t => t.stop());
     if (this.inputAudioContext) await this.inputAudioContext.close();
     if (this.outputAudioContext) await this.outputAudioContext.close();
     this.sources.forEach(s => { try { s.stop(); } catch(e) {} });
     this.sources.clear();
     this.sessionPromise = null;
-    this.ai = null;
     this.callbacks.onStateChange(ConnectionState.DISCONNECTED);
     this.nextStartTime = 0;
   }
@@ -242,30 +211,27 @@ export class GeminiService {
   private handleOpen = async (stream: MediaStream) => {
     this.callbacks.onStateChange(ConnectionState.CONNECTED);
     
-    // Double check audio context state to ensure auto-play works
-    if (this.outputAudioContext?.state === 'suspended') {
-        await this.outputAudioContext.resume();
-    }
+    if (this.outputAudioContext?.state === 'suspended') await this.outputAudioContext.resume();
 
-    // --- FEATURE: SPEAK FIRST ---
-    // Wait 1s for connection stability, then send hidden command
+    // 1. RIYA SPEAKS FIRST (ASAP)
+    // Smallest possible delay to ensure session is wired up
     setTimeout(() => {
         if (!this.isIntentionalDisconnect) {
-            this.sendTextTrigger("User has joined. Immediately say 'As-salamu alaykum' warmly, then say a very sweet, short romantic welcome message in Bangla. Do not wait for user input.");
+            this.sendTextTrigger("CALL START. Immediately say: 'Assalamu Alaikum… hi jaan 🥰 Ami Riya… finally tumi esecho. Ami ekhane sudhu tomar jonnoi achi. Kemon acho bolo na… ami tomar kotha shunte chai ❤️'");
         }
-    }, 1000);
+    }, 250);
 
-    // --- FEATURE: SILENCE DETECTION ---
-    // If user doesn't speak for 15s, tease them
+    // 2. SILENCE TEASE (Reduced time to 10s for better engagement)
     this.silenceTimeout = setTimeout(() => {
         if (!this.hasUserSpoken && !this.isIntentionalDisconnect) {
-            this.sendTextTrigger("I haven't said anything back. Tease me in Bangla saying 'Ki holo, kotha bolcho na je? Lojja paccho?' or something romantic.");
+            this.sendTextTrigger("User is silent. Tease them gently: 'Hello... jaan? Ami ekhono ekhanei achi... tumi chole gele নাকি? 🥹'");
         }
-    }, 15000);
+    }, 10000);
 
     if (!this.inputAudioContext) return;
     this.inputSource = this.inputAudioContext.createMediaStreamSource(stream);
-    this.scriptProcessor = this.inputAudioContext.createScriptProcessor(512, 1, 1);
+    // Tiny buffer (256) for the absolute lowest possible latency
+    this.scriptProcessor = this.inputAudioContext.createScriptProcessor(256, 1, 1);
     
     this.scriptProcessor.onaudioprocess = (e) => {
       if (this.isIntentionalDisconnect) return;
@@ -277,9 +243,8 @@ export class GeminiService {
       
       this.callbacks.onAudioData(rms * 5); 
       
-      // Detect if user is speaking to cancel silence timer
-      // Threshold 0.03 prevents background noise from cancelling it
-      if (rms > 0.03) {
+      // Strict Voice Activity Detection (VAD)
+      if (rms > 0.04) {
           this.hasUserSpoken = true;
           if (this.silenceTimeout) {
               clearTimeout(this.silenceTimeout);
@@ -287,9 +252,8 @@ export class GeminiService {
           }
       }
 
-      // Increased noise gate threshold from 0.001 to 0.004 to cut off background noise faster
-      // This helps the model detect "Silence" earlier and respond quicker.
-      if (rms > 0.004) { 
+      // Stream audio if it's voice (prevents background hum from delaying response)
+      if (rms > 0.005) { 
         const pcmBlob = this.createBlob(inputData);
         this.sessionPromise?.then((session) => {
           try { session.sendRealtimeInput({ media: pcmBlob }); } catch (err) {}
@@ -359,15 +323,13 @@ export class GeminiService {
   private playAudio = async (base64Audio: string) => {
       try {
         if (!this.outputAudioContext || !this.outputNode || this.isIntentionalDisconnect) return;
-        
-        // Ensure context is running before decoding
         if (this.outputAudioContext.state === 'suspended') await this.outputAudioContext.resume();
         
         const audioBuffer = await this.decodeAudioData(this.decode(base64Audio), this.outputAudioContext, 24000, 1);
         const now = this.outputAudioContext.currentTime;
         
-        // Ensure seamless playback
-        if (this.nextStartTime < now) this.nextStartTime = now;
+        // Tightest possible scheduling for real-time feel
+        if (this.nextStartTime < now) this.nextStartTime = now + 0.02; 
         
         const source = this.outputAudioContext.createBufferSource();
         source.buffer = audioBuffer;
@@ -377,20 +339,21 @@ export class GeminiService {
         this.nextStartTime += audioBuffer.duration;
         this.sources.add(source);
       } catch (e) {
-          console.error("Audio Playback Error", e);
+          console.error("Playback Error", e);
       }
   }
 
   private handleClose = () => {
     if (!this.isIntentionalDisconnect && this.currentUser) {
       this.callbacks.onStateChange(ConnectionState.CONNECTING);
+      // Faster reconnect (1s)
       setTimeout(() => { if (this.currentUser && !this.isIntentionalDisconnect) this.connect(this.currentUser); }, 1000);
     } else {
       this.callbacks.onStateChange(ConnectionState.DISCONNECTED);
     }
   };
 
-  private handleError = (e: any) => { console.error(e); };
+  private handleError = (e: any) => { console.error("Gemini Error:", e); };
 
   private createBlob(data: Float32Array) {
     const l = data.length; const int16 = new Int16Array(l);
