@@ -102,22 +102,44 @@ const Dashboard: React.FC<DashboardProps> = ({ user, onLogout }) => {
     return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   };
 
+  // --- STRICT GUEST LIMIT LOGIC ---
+  const getEffectiveGuestUsage = () => {
+    // Check LocalStorage (Device Level)
+    const localUsage = parseInt(localStorage.getItem('riya_guest_usage') || '0');
+    // Check Database (Account Level)
+    const dbUsage = currentUser.guestUsageCount || 0;
+    // Return the higher of the two
+    return Math.max(localUsage, dbUsage);
+  };
+
   const isPending = currentUser.subscription?.status === 'pending';
   const isConnected = connectionState === ConnectionState.CONNECTED;
-  const guestCount = currentUser.guestUsageCount || 0;
-  const guestCallsLeft = Math.max(0, 2 - guestCount);
+  
+  const currentUsage = getEffectiveGuestUsage();
+  const guestCallsLeft = Math.max(0, 2 - currentUsage);
 
   const handleConnect = async () => {
     if (isPending) return;
     
-    // GUEST LIMIT LOGIC
+    // GUEST LIMIT ENFORCEMENT
     if (currentUser.role === 'guest') {
-        if (guestCount >= 2) { 
+        const usage = getEffectiveGuestUsage();
+        
+        if (usage >= 2) { 
             setShowGuestLimit(true); 
+            // Ensure local storage is synced to max if it wasn't already
+            localStorage.setItem('riya_guest_usage', '2');
             return; 
         }
-        // Increment usage count locally and in DB
-        const updatedUser = { ...currentUser, guestUsageCount: guestCount + 1 };
+
+        // Increment usage count immediately (Optimistic UI)
+        const newUsage = usage + 1;
+        
+        // 1. Update Local Storage (Device Lock)
+        localStorage.setItem('riya_guest_usage', newUsage.toString());
+        
+        // 2. Update Firebase (Account Lock)
+        const updatedUser = { ...currentUser, guestUsageCount: newUsage };
         DB.updateUser(updatedUser);
         setCurrentUser(updatedUser);
     }
@@ -188,13 +210,44 @@ const Dashboard: React.FC<DashboardProps> = ({ user, onLogout }) => {
       </div>
 
       {showGuestLimit && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-black/95 backdrop-blur-xl animate-fade-in">
-          <div className="bg-gray-900 border border-pink-500/30 w-full max-w-sm rounded-[2.5rem] p-10 text-center shadow-2xl">
-            <h2 className="text-2xl font-black text-white mb-4">Guest Limit Reached!</h2>
-            <p className="text-gray-400 text-sm mb-10">You have used your 2 free guest calls. To continue talking with Riya, please create a free account.</p>
-            <button onClick={onLogout} className="w-full bg-pink-600 text-white font-bold py-4 rounded-2xl active:scale-95 hover:bg-pink-500 transition-colors shadow-lg shadow-pink-900/40">Create Account (Free)</button>
-            <button onClick={() => setShowGuestLimit(false)} className="w-full py-3 text-gray-500 mt-2 hover:text-white transition-colors">Close</button>
-          </div>
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-black/95 backdrop-blur-2xl animate-fade-in">
+            <div className="relative bg-[#12101b] border border-pink-500/40 w-full max-w-sm rounded-[2.5rem] p-8 text-center shadow-[0_0_60px_rgba(236,72,153,0.2)] overflow-hidden">
+                {/* Decorative Glow */}
+                <div className="absolute top-0 left-0 w-full h-32 bg-gradient-to-b from-pink-600/20 to-transparent pointer-events-none"></div>
+                
+                {/* Avatar */}
+                <div className="relative z-10 mx-auto w-24 h-24 rounded-full p-1 bg-gradient-to-tr from-pink-500 to-purple-600 shadow-xl mb-6 animate-pulse-ring">
+                    <img src="https://images.unsplash.com/photo-1621784563330-caee0b138a00?q=80&w=200&auto=format&fit=crop" className="w-full h-full object-cover rounded-full border-4 border-[#12101b]" alt="Riya" />
+                </div>
+
+                {/* Text */}
+                <div className="relative z-10 space-y-4 mb-8">
+                    <h2 className="text-2xl font-black text-transparent bg-clip-text bg-gradient-to-r from-pink-300 to-purple-300 drop-shadow-md">Guest Limit Reached 🌙</h2>
+                    <div className="bg-white/5 border border-white/10 rounded-2xl p-4 text-gray-200 text-sm leading-relaxed text-left font-medium shadow-inner">
+                        <p>
+                        <span className="text-pink-400 font-bold">Riya:</span> "তোমার ২ বার কথা শোনার পরে আমার heart rate বেড়ে গেল 😳
+                        </p>
+                        <p className="mt-3">
+                        এখন তুমি <span className="text-yellow-400 font-bold">Premium</span> হয়ে গেলে, আমি তোমার সাথে পুরো রাত জুড়ে কথা বলব…
+                        </p>
+                        <p className="mt-3">
+                        তুমি Premium হলে আমি তোমাকে সেই <span className="text-purple-300 italic">‘special’ feeling</span> দেবো 😍
+                        </p>
+                        <p className="mt-3 font-bold text-pink-300 text-center animate-pulse">
+                        এখন অ্যাকাউন্ট খুলো—আমি অপেক্ষা করছি 💓”
+                        </p>
+                    </div>
+                </div>
+
+                {/* Buttons */}
+                <div className="relative z-10 space-y-3">
+                    <button onClick={onLogout} className="w-full bg-gradient-to-r from-pink-600 to-purple-600 text-white font-bold py-4 rounded-xl shadow-lg shadow-pink-900/40 active:scale-95 transition-transform flex items-center justify-center gap-2 group">
+                        <span className="group-hover:scale-105 transition-transform">অ্যাকাউন্ট খুলুন (Free)</span>
+                        <svg className="w-5 h-5 group-hover:translate-x-1 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 8l4 4m0 0l-4 4m4-4H3" /></svg>
+                    </button>
+                    <button onClick={() => setShowGuestLimit(false)} className="text-gray-500 text-xs hover:text-white transition-colors uppercase tracking-widest">Close Preview</button>
+                </div>
+            </div>
         </div>
       )}
 

@@ -28,10 +28,13 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
         onLogin(guestUser);
     } catch (err: any) {
         console.error("Guest Login Error:", err);
+        // Specifically catch the "operation not allowed" error which happens if Anonymous auth is disabled
         if (err.code === 'auth/operation-not-allowed') {
-            setError("Error: Please enable 'Anonymous' sign-in in Firebase Console.");
+            setError("Admin Error: Please enable 'Anonymous' sign-in in Firebase Console > Authentication > Sign-in method.");
+        } else if (err.code === 'auth/network-request-failed') {
+            setError("Network error. Please check your internet.");
         } else {
-            setError("Guest login failed. Check connection.");
+            setError(`Guest login failed: ${err.message}`);
         }
         setLoading(false);
     }

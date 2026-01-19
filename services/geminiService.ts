@@ -107,6 +107,10 @@ export class GeminiService {
   private watchdogInterval: any = null;
   private lastMessageTimestamp = 0;
 
+  // Added for "Speak First" feature
+  private silenceTimeout: any = null;
+  private hasUserSpoken = false;
+
   constructor(callbacks: GeminiServiceCallbacks) {
     this.callbacks = callbacks;
   }
@@ -114,18 +118,29 @@ export class GeminiService {
   public async connect(user: UserProfile) {
     this.currentUser = user;
     this.isIntentionalDisconnect = false;
+    this.hasUserSpoken = false; 
+    if (this.silenceTimeout) clearTimeout(this.silenceTimeout);
+
     this.callbacks.onStateChange(ConnectionState.CONNECTING);
 
     try {
       this.ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
+      // Low latency mode for faster response
       if (!this.inputAudioContext || this.inputAudioContext.state === 'closed') {
-        this.inputAudioContext = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
+        this.inputAudioContext = new (window.AudioContext || (window as any).webkitAudioContext)({ 
+            sampleRate: 16000, 
+            latencyHint: 'interactive' 
+        });
       }
       if (!this.outputAudioContext || this.outputAudioContext.state === 'closed') {
-        this.outputAudioContext = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
+        this.outputAudioContext = new (window.AudioContext || (window as any).webkitAudioContext)({ 
+            sampleRate: 24000,
+            latencyHint: 'interactive'
+        });
       }
 
+      // Important: Resume context immediately on user gesture click
       await this.inputAudioContext.resume();
       await this.outputAudioContext.resume();
 
@@ -183,6 +198,7 @@ export class GeminiService {
       this.heartbeatInterval = setInterval(() => this.sendHeartbeat(), 10000);
 
     } catch (err: any) {
+      console.error("Connection Error:", err);
       this.callbacks.onError("Link failed. Check mic.");
       this.callbacks.onStateChange(ConnectionState.ERROR);
     }
@@ -197,8 +213,19 @@ export class GeminiService {
     }).catch(() => {});
   }
 
+  // Helper: Force the model to speak by simulating a user text input
+  private sendTextTrigger(text: string) {
+    console.log("Sending Text Trigger:", text);
+    this.sessionPromise?.then(session => {
+        session.sendRealtimeInput({
+            content: [{ role: 'user', parts: [{ text: text }] }]
+        });
+    }).catch(e => console.error("Trigger failed", e));
+  }
+
   public async disconnect() {
     this.isIntentionalDisconnect = true;
+    if (this.silenceTimeout) clearTimeout(this.silenceTimeout);
     if (this.watchdogInterval) clearInterval(this.watchdogInterval);
     if (this.heartbeatInterval) clearInterval(this.heartbeatInterval);
     if (this.inputSource) this.inputSource.mediaStream.getTracks().forEach(t => t.stop());
@@ -212,25 +239,64 @@ export class GeminiService {
     this.nextStartTime = 0;
   }
 
-  private handleOpen = (stream: MediaStream) => {
+  private handleOpen = async (stream: MediaStream) => {
     this.callbacks.onStateChange(ConnectionState.CONNECTED);
+    
+    // Double check audio context state to ensure auto-play works
+    if (this.outputAudioContext?.state === 'suspended') {
+        await this.outputAudioContext.resume();
+    }
+
+    // --- FEATURE: SPEAK FIRST ---
+    // Wait 1s for connection stability, then send hidden command
+    setTimeout(() => {
+        if (!this.isIntentionalDisconnect) {
+            this.sendTextTrigger("User has joined. Immediately say 'As-salamu alaykum' warmly, then say a very sweet, short romantic welcome message in Bangla. Do not wait for user input.");
+        }
+    }, 1000);
+
+    // --- FEATURE: SILENCE DETECTION ---
+    // If user doesn't speak for 15s, tease them
+    this.silenceTimeout = setTimeout(() => {
+        if (!this.hasUserSpoken && !this.isIntentionalDisconnect) {
+            this.sendTextTrigger("I haven't said anything back. Tease me in Bangla saying 'Ki holo, kotha bolcho na je? Lojja paccho?' or something romantic.");
+        }
+    }, 15000);
+
     if (!this.inputAudioContext) return;
     this.inputSource = this.inputAudioContext.createMediaStreamSource(stream);
     this.scriptProcessor = this.inputAudioContext.createScriptProcessor(512, 1, 1);
+    
     this.scriptProcessor.onaudioprocess = (e) => {
       if (this.isIntentionalDisconnect) return;
+      
       const inputData = e.inputBuffer.getChannelData(0);
       let sum = 0;
       for (let i = 0; i < inputData.length; i++) sum += inputData[i] * inputData[i];
       const rms = Math.sqrt(sum / inputData.length);
+      
       this.callbacks.onAudioData(rms * 5); 
-      if (rms > 0.0005) {
+      
+      // Detect if user is speaking to cancel silence timer
+      // Threshold 0.03 prevents background noise from cancelling it
+      if (rms > 0.03) {
+          this.hasUserSpoken = true;
+          if (this.silenceTimeout) {
+              clearTimeout(this.silenceTimeout);
+              this.silenceTimeout = null;
+          }
+      }
+
+      // Increased noise gate threshold from 0.001 to 0.004 to cut off background noise faster
+      // This helps the model detect "Silence" earlier and respond quicker.
+      if (rms > 0.004) { 
         const pcmBlob = this.createBlob(inputData);
         this.sessionPromise?.then((session) => {
           try { session.sendRealtimeInput({ media: pcmBlob }); } catch (err) {}
         });
       }
     };
+    
     this.inputSource.connect(this.scriptProcessor);
     this.scriptProcessor.connect(this.inputAudioContext.destination);
   };
@@ -293,10 +359,16 @@ export class GeminiService {
   private playAudio = async (base64Audio: string) => {
       try {
         if (!this.outputAudioContext || !this.outputNode || this.isIntentionalDisconnect) return;
+        
+        // Ensure context is running before decoding
         if (this.outputAudioContext.state === 'suspended') await this.outputAudioContext.resume();
+        
         const audioBuffer = await this.decodeAudioData(this.decode(base64Audio), this.outputAudioContext, 24000, 1);
         const now = this.outputAudioContext.currentTime;
-        this.nextStartTime = Math.max(this.nextStartTime, now + 0.01); 
+        
+        // Ensure seamless playback
+        if (this.nextStartTime < now) this.nextStartTime = now;
+        
         const source = this.outputAudioContext.createBufferSource();
         source.buffer = audioBuffer;
         source.connect(this.outputNode);
@@ -304,7 +376,9 @@ export class GeminiService {
         source.start(this.nextStartTime);
         this.nextStartTime += audioBuffer.duration;
         this.sources.add(source);
-      } catch (e) {}
+      } catch (e) {
+          console.error("Audio Playback Error", e);
+      }
   }
 
   private handleClose = () => {
@@ -316,7 +390,7 @@ export class GeminiService {
     }
   };
 
-  private handleError = (e: any) => {};
+  private handleError = (e: any) => { console.error(e); };
 
   private createBlob(data: Float32Array) {
     const l = data.length; const int16 = new Int16Array(l);
