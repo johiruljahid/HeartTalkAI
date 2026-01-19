@@ -44,8 +44,8 @@ export interface UserProfile {
   id: string;
   name: string;
   age: string;
-  phone?: string;
-  password?: string;
+  email?: string;
+  phone?: string; 
   role: UserRole;
   subscription?: Subscription;
   guestUsageCount?: number;

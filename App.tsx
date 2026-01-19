@@ -2,53 +2,55 @@
 import React, { useState, useEffect } from 'react';
 import Login from './components/Login';
 import Dashboard from './components/Dashboard';
-// Fix: Import UserProfile from types.ts
 import { UserProfile } from './types';
 import { DB } from './services/db';
 
 const App: React.FC = () => {
   const [user, setUser] = useState<UserProfile | null>(null);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const sessionUserId = localStorage.getItem('riya_session_id');
-    if (sessionUserId) {
-      const dbUser = DB.getUserById(sessionUserId);
-      if (dbUser) setUser(dbUser);
-      else localStorage.removeItem('riya_session_id');
-    }
+    // Subscribe to Firebase Auth State
+    const unsubscribe = DB.subscribeToAuth((authUser) => {
+        setUser(authUser);
+        setLoading(false);
+    });
 
+    // Also listen for profile updates (e.g. admin approval)
     const sync = () => {
-      const id = localStorage.getItem('riya_session_id');
-      if (id) {
-        const fresh = DB.getUserById(id);
-        if (fresh) setUser(fresh);
-      } else {
-        setUser(null);
-      }
+        if (user) {
+            const fresh = DB.getUserById(user.id);
+            if (fresh) setUser(fresh);
+        }
     };
-
-    window.addEventListener('storage', sync);
     window.addEventListener('riya-sync', sync);
-    return () => {
-      window.removeEventListener('storage', sync);
-      window.removeEventListener('riya-sync', sync);
-    };
-  }, []);
 
-  const handleLogin = (newUser: UserProfile) => {
-    localStorage.setItem('riya_session_id', newUser.id);
-    setUser(newUser);
-  };
+    return () => {
+        unsubscribe();
+        window.removeEventListener('riya-sync', sync);
+    };
+  }, [user?.id]); // Re-bind sync if user ID changes (login/logout)
 
   const handleLogout = () => {
-    localStorage.removeItem('riya_session_id');
+    DB.logout();
     setUser(null);
   };
+
+  if (loading) {
+    return (
+        <div className="h-screen w-full bg-black flex items-center justify-center">
+            <div className="animate-pulse flex flex-col items-center gap-4">
+                <div className="w-16 h-16 rounded-full border-4 border-t-pink-500 border-r-transparent border-b-purple-500 border-l-transparent animate-spin"></div>
+                <p className="text-pink-500 font-mono text-xs tracking-widest uppercase">Connecting to Riya...</p>
+            </div>
+        </div>
+    );
+  }
 
   return (
     <div className="antialiased text-gray-100 font-quicksand">
       {!user ? (
-        <Login onLogin={handleLogin} />
+        <Login onLogin={() => {}} /> 
       ) : (
         <Dashboard user={user} onLogout={handleLogout} />
       )}

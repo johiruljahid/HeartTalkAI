@@ -5,85 +5,69 @@ import { DB } from '../services/db';
 import AdminPanel from './AdminPanel';
 
 interface LoginProps {
-  onLogin: (user: UserProfile) => void;
+  onLogin: (user: UserProfile) => void; // Kept for prop compatibility, but App.tsx handles state via auth listener
 }
 
-const Login: React.FC<LoginProps> = ({ onLogin }) => {
+const Login: React.FC<LoginProps> = () => {
   const [mode, setMode] = useState<'login' | 'register'>('login');
-  const [phone, setPhone] = useState('');
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [name, setName] = useState('');
   const [age, setAge] = useState('');
   const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
   
   // State to toggle Admin Panel
   const [showAdmin, setShowAdmin] = useState(false);
 
-  const handleGuestAccess = () => {
-    // Generate or retrieve a stable guest ID for this device
-    let guestId = localStorage.getItem('riya_stable_guest_id');
-    if (!guestId) {
-      guestId = `guest_${Date.now()}`;
-      localStorage.setItem('riya_stable_guest_id', guestId);
+  const handleGuestAccess = async () => {
+    setLoading(true);
+    setError('');
+    try {
+        await DB.loginAsGuest();
+        // App.tsx auth listener will handle the rest
+    } catch (err: any) {
+        setError("Guest login failed: " + err.message);
+        setLoading(false);
     }
-
-    // Attempt to retrieve or register guest in persistent DB
-    let guestUser = DB.getUserById(guestId);
-    if (!guestUser) {
-      guestUser = {
-        id: guestId,
-        name: 'Guest',
-        age: '25',
-        role: 'guest',
-        guestUsageCount: 0
-      };
-      DB.register(guestUser);
-    }
-    onLogin(guestUser);
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
+    setLoading(true);
 
-    if (mode === 'login') {
-      const user = DB.login(phone, password);
-      if (user) {
-        onLogin(user);
-      } else {
-        setError('Invalid phone or password. Check spaces?');
-      }
-    } else {
-      if (!name || !age || !phone || !password) {
-        setError('All fields are required');
-        return;
-      }
-      try {
-        const newUser: UserProfile = {
-          id: `user_${Date.now()}`,
-          name: name.trim(),
-          age: age.trim(),
-          phone: phone.trim(),
-          password: password.trim(),
-          role: 'free'
-        };
-        DB.register(newUser);
-        onLogin(newUser);
-      } catch (err: any) {
-        setError(err.message);
-      }
+    try {
+        if (mode === 'login') {
+            await DB.login(email, password);
+        } else {
+            if (!name || !age || !email || !password) {
+                throw new Error('All fields are required');
+            }
+            await DB.register(email, password, {
+                name: name.trim(),
+                age: age.trim(),
+            });
+        }
+    } catch (err: any) {
+        let msg = err.message;
+        if (msg.includes('auth/invalid-credential')) msg = "Incorrect email or password.";
+        if (msg.includes('auth/email-already-in-use')) msg = "Email already registered. Try logging in.";
+        if (msg.includes('auth/weak-password')) msg = "Password should be at least 6 characters.";
+        setError(msg);
+        setLoading(false);
     }
   };
 
   return (
     <div className="min-h-screen w-full flex flex-col items-center justify-center p-6 bg-black overflow-hidden relative">
-      {/* Background Image - Updated with provided URL */}
+      {/* Background Image */}
       <div 
         className="absolute inset-0 bg-cover bg-center opacity-80 blur-[1px] transition-all duration-1000 scale-105"
         style={{ backgroundImage: "url('https://i.ibb.co.com/0VzDsHWv/login-bg-jpg.jpg')" }}
       ></div>
 
-      {/* Light Overlay for better text visibility */}
+      {/* Light Overlay */}
       <div className="absolute inset-0 bg-black/40 backdrop-blur-[1px] z-0"></div>
 
       <div className="relative z-10 w-full max-w-md flex flex-col items-center">
@@ -130,9 +114,9 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
             )}
             
             <input 
-              type="text" value={phone} onChange={(e) => setPhone(e.target.value)}
+              type="email" value={email} onChange={(e) => setEmail(e.target.value)}
               className="bg-black/30 border border-white/10 rounded-xl px-4 py-3 text-white placeholder-gray-500 focus:outline-none focus:border-pink-500/50 transition-colors"
-              placeholder="Mobile Number"
+              placeholder="Email Address"
             />
             <input 
               type="password" value={password} onChange={(e) => setPassword(e.target.value)}
@@ -140,12 +124,14 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
               placeholder="Password"
             />
 
-            {error && <p className="text-red-400 text-xs text-center">{error}</p>}
+            {error && <p className="text-red-400 text-xs text-center bg-red-900/20 p-2 rounded border border-red-500/20">{error}</p>}
 
             <button 
               type="submit"
-              className="mt-2 w-full bg-gradient-to-r from-pink-600 to-purple-600 text-white font-bold py-3.5 rounded-xl shadow-lg active:scale-95 transition-transform"
+              disabled={loading}
+              className={`mt-2 w-full bg-gradient-to-r from-pink-600 to-purple-600 text-white font-bold py-3.5 rounded-xl shadow-lg active:scale-95 transition-transform flex items-center justify-center gap-2 ${loading ? 'opacity-70 cursor-not-allowed' : ''}`}
             >
+              {loading && <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>}
               {mode === 'login' ? 'Unlock Riya' : 'Create Account'}
             </button>
           </form>
@@ -158,8 +144,10 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
 
           <button 
             onClick={handleGuestAccess}
-            className="mt-6 w-full bg-white/5 border border-white/10 hover:bg-white/10 text-gray-300 font-medium py-3 rounded-xl transition-colors text-sm"
+            disabled={loading}
+            className="mt-6 w-full bg-white/5 border border-white/10 hover:bg-white/10 text-gray-300 font-medium py-3 rounded-xl transition-colors text-sm flex items-center justify-center gap-2"
           >
+             {loading && <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>}
             Continue as Guest (Limited)
           </button>
         </div>
