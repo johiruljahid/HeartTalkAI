@@ -1,267 +1,184 @@
 
-import { GoogleGenAI, LiveServerMessage, Modality, FunctionDeclaration, Type, HarmCategory, HarmBlockThreshold } from "@google/genai";
-import { ConnectionState, UserProfile, Mood } from "../types";
-import { GET_RIYA_INSTRUCTION, MODEL_NAME, VOICE_NAME, THINKING_BUDGET } from "../constants";
-import { DB } from "./db";
+import { GoogleGenAI, LiveServerMessage, Modality } from "@google/genai";
+import { ConnectionState, UserProfile, Mood, ConversationMode } from "../types";
+import { GET_RIYA_INSTRUCTION, MODEL_NAME, GET_VOICE_NAME, SAFETY_SETTINGS } from "../constants";
 
 interface GeminiServiceCallbacks {
   onStateChange: (state: ConnectionState) => void;
   onTranscript: (text: string, isUser: boolean) => void;
-  onAudioData: (amplitude: number) => void; 
+  onAudioData: (amplitude: number, isAI: boolean) => void; 
   onError: (error: string) => void;
   onUserUpdate: (user: UserProfile) => void;
   onToolAction: (message: string, type: 'memory' | 'event' | 'routine' | 'emotion' | 'reminder') => void;
   onMoodChange: (mood: Mood) => void;
 }
 
-const googleSearchTool = { googleSearch: {} };
-
-const timeTool: FunctionDeclaration = {
-  name: "getCurrentTime",
-  description: "Get the current real-time date and time in Bangladesh format.",
-  parameters: { type: Type.OBJECT, properties: {} },
-};
-
-const setMoodTool: FunctionDeclaration = {
-  name: "setMood",
-  description: "Change the visual aura/color of Riya based on the emotional tone of the conversation.",
-  parameters: {
-    type: Type.OBJECT,
-    properties: {
-      mood: { 
-        type: Type.STRING, 
-        description: "The mood to set.",
-        enum: ['happy', 'romantic', 'calm', 'excited', 'sad', 'intense', 'default']
-      }
-    },
-    required: ["mood"]
-  }
-};
-
-const saveNoteTool: FunctionDeclaration = {
-  name: "saveNote",
-  description: "Save a fact, preference, or important note about the user to long-term memory.",
-  parameters: {
-    type: Type.OBJECT,
-    properties: { note: { type: Type.STRING, description: "The content to remember." } },
-    required: ["note"]
-  },
-};
-
-const setReminderTool: FunctionDeclaration = {
-  name: "setReminder",
-  description: "Set a reminder for a specific task or message at a specific time.",
-  parameters: {
-    type: Type.OBJECT,
-    properties: {
-      message: { type: Type.STRING, description: "The reminder message." },
-      time: { type: Type.STRING, description: "When to remind (e.g., 'at 5pm', 'in 10 minutes')." }
-    },
-    required: ["message", "time"]
-  },
-};
-
-const addEventTool: FunctionDeclaration = {
-  name: "addEvent",
-  description: "Add an important date like a birthday, anniversary, or meeting to the calendar.",
-  parameters: {
-    type: Type.OBJECT,
-    properties: {
-      title: { type: Type.STRING, description: "What is the event? (e.g. 'My Birthday')" },
-      date: { type: Type.STRING, date: "Date of event (e.g. '15th August')" },
-      type: { type: Type.STRING, enum: ['birthday', 'meeting', 'anniversary', 'other'] }
-    },
-    required: ["title", "date", "type"]
-  }
-};
-
-const addRoutineTool: FunctionDeclaration = {
-  name: "addRoutine",
-  description: "Add a daily recurring activity or medicine schedule.",
-  parameters: {
-    type: Type.OBJECT,
-    properties: {
-      time: { type: Type.STRING, description: "Time of day (e.g. '8:00 AM')" },
-      activity: { type: Type.STRING, description: "What to do? (e.g. 'Take Blood Pressure Medicine')" }
-    },
-    required: ["time", "activity"]
-  }
-};
-
 export class GeminiService {
   private ai: GoogleGenAI | null = null;
+  private currentSession: any = null;
   private sessionPromise: Promise<any> | null = null;
+  
   private inputAudioContext: AudioContext | null = null;
   private outputAudioContext: AudioContext | null = null;
   private inputSource: MediaStreamAudioSourceNode | null = null;
   private scriptProcessor: ScriptProcessorNode | null = null;
   private outputNode: GainNode | null = null;
+  private inputGainNode: GainNode | null = null;
   
   private nextStartTime = 0;
   private sources = new Set<AudioBufferSourceNode>();
   private callbacks: GeminiServiceCallbacks;
 
   private currentUser: UserProfile | null = null;
+  private currentMode: ConversationMode = 'dirty';
   private isIntentionalDisconnect = false;
-  private lastMessageTimestamp = 0;
-
-  private silenceTimeout: any = null;
-  private hasUserSpoken = false;
+  private isConnecting = false;
+  private stream: MediaStream | null = null;
+  
+  private connectionMonitor: any = null;
+  private networkListener: (() => void) | null = null;
 
   constructor(callbacks: GeminiServiceCallbacks) {
     this.callbacks = callbacks;
   }
 
-  public async connect(user: UserProfile) {
+  public async connect(user: UserProfile, mode: ConversationMode = 'dirty') {
+    if (this.currentSession || this.isConnecting) return;
+    
+    this.isConnecting = true;
     this.currentUser = user;
+    this.currentMode = mode;
     this.isIntentionalDisconnect = false;
-    this.hasUserSpoken = false; 
-    if (this.silenceTimeout) clearTimeout(this.silenceTimeout);
-
     this.callbacks.onStateChange(ConnectionState.CONNECTING);
 
+    if (!this.networkListener) {
+        this.networkListener = () => {
+            if (navigator.onLine && !this.isIntentionalDisconnect && !this.currentSession) {
+                this.reconnect();
+            }
+        };
+        window.addEventListener('online', this.networkListener);
+        window.addEventListener('offline', () => this.callbacks.onStateChange(ConnectionState.DISCONNECTED));
+    }
+
+    this.startConnectionMonitor();
+
     try {
-      this.ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+      await this.cleanupResources();
+      await this.initializeSession(user, mode);
+    } catch (err: any) {
+      console.error("Connection Failed:", err);
+      this.callbacks.onStateChange(ConnectionState.ERROR);
+      this.cleanupResources();
+      this.isConnecting = false;
+      
+      if (!this.isIntentionalDisconnect) {
+          setTimeout(() => this.reconnect(), 3000);
+      }
+    }
+  }
 
-      // Using 'interactive' latency hint for ultra-low latency response
-      this.inputAudioContext = new (window.AudioContext || (window as any).webkitAudioContext)({ 
-        sampleRate: 16000,
-        latencyHint: 'interactive'
-      });
-      this.outputAudioContext = new (window.AudioContext || (window as any).webkitAudioContext)({ 
-        sampleRate: 24000,
-        latencyHint: 'interactive'
+  private async initializeSession(user: UserProfile, mode: ConversationMode) {
+      this.stream = await navigator.mediaDevices.getUserMedia({ 
+        audio: { 
+          echoCancellation: true, 
+          noiseSuppression: true, 
+          autoGainControl: true,
+          sampleRate: 16000,
+          channelCount: 1
+        } 
       });
 
+      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+      this.inputAudioContext = new AudioCtx({ sampleRate: 16000 });
+      this.outputAudioContext = new AudioCtx({ sampleRate: 24000 });
+      
       await this.inputAudioContext.resume();
       await this.outputAudioContext.resume();
 
       this.outputNode = this.outputAudioContext.createGain();
       this.outputNode.connect(this.outputAudioContext.destination);
 
-      const stream = await navigator.mediaDevices.getUserMedia({ 
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-          channelCount: 1,
-          sampleRate: 16000
-        } 
-      });
-
-      const systemInstruction = GET_RIYA_INSTRUCTION(user);
-      const functionDeclarations = [timeTool, setMoodTool, saveNoteTool, setReminderTool, addEventTool, addRoutineTool];
+      this.ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+      const voiceName = GET_VOICE_NAME(user.gender || 'male', mode);
 
       this.sessionPromise = this.ai.live.connect({
         model: MODEL_NAME,
         callbacks: {
-          onopen: () => this.handleOpen(stream),
-          onmessage: (msg) => {
-            this.lastMessageTimestamp = Date.now();
-            this.handleMessage(msg);
+          onopen: () => this.handleOpen(),
+          onmessage: (msg) => this.handleMessage(msg),
+          onclose: (e) => this.handleClose(),
+          onerror: (err) => {
+            console.error("Gemini Error:", err);
+            this.handleClose();
           },
-          onclose: () => this.handleClose(),
-          onerror: (err) => this.handleError(err),
         },
         config: {
           responseModalities: [Modality.AUDIO],
-          speechConfig: {
-            voiceConfig: { prebuiltVoiceConfig: { voiceName: VOICE_NAME } },
+          speechConfig: { 
+            voiceConfig: { prebuiltVoiceConfig: { voiceName } } 
           },
-          systemInstruction: systemInstruction,
-          tools: [{ functionDeclarations }, googleSearchTool],
-          thinkingConfig: { thinkingBudget: THINKING_BUDGET },
-          safetySettings: [
-             { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_NONE },
-             { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
-             { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
-             { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE }
-          ],
+          systemInstruction: GET_RIYA_INSTRUCTION(user, mode),
+          safetySettings: SAFETY_SETTINGS,
+          outputAudioTranscription: {}, // Enabled for mentor report generation
         },
       });
 
-    } catch (err: any) {
-      console.error("Connection Error:", err);
-      this.callbacks.onError("Link failed.");
-      this.callbacks.onStateChange(ConnectionState.ERROR);
-    }
+      this.currentSession = await this.sessionPromise;
+      this.isConnecting = false;
   }
 
-  private sendTextTrigger(text: string) {
-    this.sessionPromise?.then(session => {
-        session.sendRealtimeInput({
-            content: [{ role: 'user', parts: [{ text: text }] }]
-        });
-    }).catch(e => console.error("Trigger failed", e));
+  private startConnectionMonitor() {
+    if (this.connectionMonitor) clearInterval(this.connectionMonitor);
+    this.connectionMonitor = setInterval(async () => {
+        if (this.isIntentionalDisconnect) {
+            clearInterval(this.connectionMonitor);
+            return;
+        }
+        if (!navigator.onLine) {
+            this.callbacks.onStateChange(ConnectionState.DISCONNECTED);
+            return;
+        }
+        if (!this.currentSession && !this.isConnecting) {
+             this.reconnect();
+        }
+    }, 3000);
   }
 
-  public async disconnect() {
-    this.isIntentionalDisconnect = true;
-    if (this.silenceTimeout) clearTimeout(this.silenceTimeout);
-    if (this.inputSource) this.inputSource.mediaStream.getTracks().forEach(t => t.stop());
-    if (this.inputAudioContext) await this.inputAudioContext.close();
-    if (this.outputAudioContext) await this.outputAudioContext.close();
-    this.sources.forEach(s => { try { s.stop(); } catch(e) {} });
-    this.sources.clear();
-    this.sessionPromise = null;
-    this.callbacks.onStateChange(ConnectionState.DISCONNECTED);
-    this.nextStartTime = 0;
+  private async reconnect() {
+      if (this.isIntentionalDisconnect || !this.currentUser) return;
+      await this.connect(this.currentUser, this.currentMode);
   }
 
-  private handleOpen = async (stream: MediaStream) => {
+  private handleOpen = () => {
+    if (!this.stream || !this.inputAudioContext) return;
     this.callbacks.onStateChange(ConnectionState.CONNECTED);
-    
-    if (this.outputAudioContext?.state === 'suspended') await this.outputAudioContext.resume();
 
-    // 1. RIYA SPEAKS FIRST (ASAP)
-    // Smallest possible delay to ensure session is wired up
-    setTimeout(() => {
-        if (!this.isIntentionalDisconnect) {
-            this.sendTextTrigger("CALL START. Immediately say: 'Assalamu Alaikum… hi jaan 🥰 Ami Riya… finally tumi esecho. Ami ekhane sudhu tomar jonnoi achi. Kemon acho bolo na… ami tomar kotha shunte chai ❤️'");
-        }
-    }, 250);
+    this.inputSource = this.inputAudioContext.createMediaStreamSource(this.stream);
+    this.inputGainNode = this.inputAudioContext.createGain();
+    this.inputGainNode.gain.value = 3.5; 
 
-    // 2. SILENCE TEASE (Reduced time to 10s for better engagement)
-    this.silenceTimeout = setTimeout(() => {
-        if (!this.hasUserSpoken && !this.isIntentionalDisconnect) {
-            this.sendTextTrigger("User is silent. Tease them gently: 'Hello... jaan? Ami ekhono ekhanei achi... tumi chole gele নাকি? 🥹'");
-        }
-    }, 10000);
-
-    if (!this.inputAudioContext) return;
-    this.inputSource = this.inputAudioContext.createMediaStreamSource(stream);
-    // Tiny buffer (256) for the absolute lowest possible latency
-    this.scriptProcessor = this.inputAudioContext.createScriptProcessor(256, 1, 1);
-    
+    this.scriptProcessor = this.inputAudioContext.createScriptProcessor(2048, 1, 1);
     this.scriptProcessor.onaudioprocess = (e) => {
-      if (this.isIntentionalDisconnect) return;
-      
+      if (this.isIntentionalDisconnect || !this.currentSession) return;
       const inputData = e.inputBuffer.getChannelData(0);
       let sum = 0;
       for (let i = 0; i < inputData.length; i++) sum += inputData[i] * inputData[i];
       const rms = Math.sqrt(sum / inputData.length);
       
-      this.callbacks.onAudioData(rms * 5); 
-      
-      // Strict Voice Activity Detection (VAD)
-      if (rms > 0.04) {
-          this.hasUserSpoken = true;
-          if (this.silenceTimeout) {
-              clearTimeout(this.silenceTimeout);
-              this.silenceTimeout = null;
-          }
+      if (this.sources.size === 0) {
+        this.callbacks.onAudioData(rms * 100, false);
       }
 
-      // Stream audio if it's voice (prevents background hum from delaying response)
-      if (rms > 0.005) { 
-        const pcmBlob = this.createBlob(inputData);
-        this.sessionPromise?.then((session) => {
-          try { session.sendRealtimeInput({ media: pcmBlob }); } catch (err) {}
-        });
-      }
+      this.sessionPromise?.then(session => {
+        try {
+          session.sendRealtimeInput({ media: this.createBlob(inputData) });
+        } catch (err) {}
+      });
     };
-    
-    this.inputSource.connect(this.scriptProcessor);
+
+    this.inputSource.connect(this.inputGainNode);
+    this.inputGainNode.connect(this.scriptProcessor);
     this.scriptProcessor.connect(this.inputAudioContext.destination);
   };
 
@@ -270,102 +187,126 @@ export class GeminiService {
       this.sources.forEach(s => { try { s.stop(); } catch(e){} });
       this.sources.clear();
       this.nextStartTime = 0;
-      return; 
-    }
-    if (message.toolCall) {
-      this.handleToolCall(message.toolCall);
       return;
     }
-    const base64Audio = message.serverContent?.modelTurn?.parts?.[0]?.inlineData?.data;
-    if (base64Audio) this.playAudio(base64Audio);
+
+    if (message.serverContent?.outputTranscription) {
+      this.callbacks.onTranscript(message.serverContent.outputTranscription.text, false);
+    }
+    if (message.serverContent?.inputTranscription) {
+      this.callbacks.onTranscript(message.serverContent.inputTranscription.text, true);
+    }
+
+    const audioData = message.serverContent?.modelTurn?.parts?.[0]?.inlineData?.data;
+    if (audioData) {
+      await this.playAudio(audioData);
+    }
+
+    if (message.toolCall) {
+      for (const fc of message.toolCall.functionCalls) {
+        this.sessionPromise?.then(session => {
+          session.sendToolResponse({
+            functionResponses: [{ id: fc.id, name: fc.name, response: { result: "ok" } }]
+          });
+        });
+      }
+    }
   };
 
-  private handleToolCall = (toolCall: any) => {
-     const functionResponses = toolCall.functionCalls.map((fc: any) => {
-        let result = { result: "Success" };
-        const user = this.currentUser;
-        if (!user) return { id: fc.id, name: fc.name, response: { error: "User not loaded" } };
-        
-        const memory = user.memory || { notes: [], events: [], routines: [], emotions: [], reminders: [] };
-
-        if (fc.name === 'getCurrentTime') {
-          result = { result: `Current time is ${new Date().toLocaleTimeString()}` };
-        } else if (fc.name === 'setMood') {
-          this.callbacks.onMoodChange(fc.args.mood as Mood);
-          result = { result: "Mood updated" };
-        } else if (fc.name === 'saveNote') {
-          memory.notes.push(fc.args.note);
-          this.callbacks.onToolAction(`Saved to Notebook`, 'memory');
-        } else if (fc.name === 'setReminder') {
-          const newReminder = { id: `rem_${Date.now()}`, message: fc.args.message, time: fc.args.time, timestamp: Date.now(), isCompleted: false };
-          memory.reminders.push(newReminder);
-          this.callbacks.onToolAction(`Reminder set: ${fc.args.message}`, 'reminder');
-        } else if (fc.name === 'addEvent') {
-          const newEvent = { id: `ev_${Date.now()}`, title: fc.args.title, date: fc.args.date, type: fc.args.type };
-          memory.events.push(newEvent);
-          this.callbacks.onToolAction(`Event added: ${fc.args.title}`, 'event');
-        } else if (fc.name === 'addRoutine') {
-          const newRoutine = { id: `rot_${Date.now()}`, time: fc.args.time, activity: fc.args.activity };
-          memory.routines.push(newRoutine);
-          this.callbacks.onToolAction(`Routine added: ${fc.args.activity}`, 'routine');
-        }
-
-        const updatedUser = { ...user, memory };
-        DB.updateUser(updatedUser);
-        this.currentUser = updatedUser;
-        this.callbacks.onUserUpdate(updatedUser);
-
-        return { id: fc.id, name: fc.name, response: result };
-      });
-      this.sessionPromise?.then(session => session.sendToolResponse({ functionResponses }));
-  }
-
   private playAudio = async (base64Audio: string) => {
-      try {
-        if (!this.outputAudioContext || !this.outputNode || this.isIntentionalDisconnect) return;
-        if (this.outputAudioContext.state === 'suspended') await this.outputAudioContext.resume();
-        
-        const audioBuffer = await this.decodeAudioData(this.decode(base64Audio), this.outputAudioContext, 24000, 1);
-        const now = this.outputAudioContext.currentTime;
-        
-        // Tightest possible scheduling for real-time feel
-        if (this.nextStartTime < now) this.nextStartTime = now + 0.02; 
-        
-        const source = this.outputAudioContext.createBufferSource();
-        source.buffer = audioBuffer;
-        source.connect(this.outputNode);
-        source.onended = () => this.sources.delete(source);
-        source.start(this.nextStartTime);
-        this.nextStartTime += audioBuffer.duration;
-        this.sources.add(source);
-      } catch (e) {
-          console.error("Playback Error", e);
-      }
-  }
+    if (!this.outputAudioContext || !this.outputNode) return;
+    try {
+      const audioBuffer = await this.decodeAudioData(
+        this.decode(base64Audio),
+        this.outputAudioContext,
+        24000,
+        1
+      );
+      const aiData = audioBuffer.getChannelData(0);
+      let aiSum = 0;
+      for (let i = 0; i < aiData.length; i++) aiSum += aiData[i] * aiData[i];
+      const aiRms = Math.sqrt(aiSum / aiData.length);
+
+      this.nextStartTime = Math.max(this.nextStartTime, this.outputAudioContext.currentTime);
+      const source = this.outputAudioContext.createBufferSource();
+      source.buffer = audioBuffer;
+      source.connect(this.outputNode);
+      source.onended = () => {
+        this.sources.delete(source);
+        if (this.sources.size === 0) this.callbacks.onAudioData(0, true);
+      };
+      source.start(this.nextStartTime);
+      this.nextStartTime += audioBuffer.duration;
+      this.sources.add(source);
+      this.callbacks.onAudioData(aiRms * 120, true);
+    } catch (e) {}
+  };
 
   private handleClose = () => {
     if (!this.isIntentionalDisconnect && this.currentUser) {
+      this.currentSession = null;
       this.callbacks.onStateChange(ConnectionState.CONNECTING);
-      // Faster reconnect (1s)
-      setTimeout(() => { if (this.currentUser && !this.isIntentionalDisconnect) this.connect(this.currentUser); }, 1000);
+      setTimeout(() => this.reconnect(), 500);
     } else {
       this.callbacks.onStateChange(ConnectionState.DISCONNECTED);
     }
   };
 
-  private handleError = (e: any) => { console.error("Gemini Error:", e); };
+  public async disconnect() {
+    this.isIntentionalDisconnect = true;
+    if (this.connectionMonitor) clearInterval(this.connectionMonitor);
+    if (this.networkListener) window.removeEventListener('online', this.networkListener);
+    this.networkListener = null;
+    await this.cleanupResources();
+    this.callbacks.onStateChange(ConnectionState.DISCONNECTED);
+  }
+
+  private async cleanupResources() {
+    this.sources.forEach(s => { try { s.stop(); } catch(e){} });
+    this.sources.clear();
+    this.nextStartTime = 0;
+    if (this.scriptProcessor) { try { this.scriptProcessor.disconnect(); } catch(e){} this.scriptProcessor = null; }
+    if (this.inputSource) { try { this.inputSource.disconnect(); } catch(e){} this.inputSource = null; }
+    if (this.stream) { this.stream.getTracks().forEach(t => t.stop()); this.stream = null; }
+    if (this.inputAudioContext) { try { await this.inputAudioContext.close(); } catch(e){} this.inputAudioContext = null; }
+    if (this.outputAudioContext) { try { await this.outputAudioContext.close(); } catch(e){} this.outputAudioContext = null; }
+    this.currentSession = null;
+    this.sessionPromise = null;
+  }
 
   private createBlob(data: Float32Array) {
-    const l = data.length; const int16 = new Int16Array(l);
-    for (let i = 0; i < l; i++) { const s = Math.max(-1, Math.min(1, data[i])); int16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF; }
+    const int16 = new Int16Array(data.length);
+    for (let i = 0; i < data.length; i++) {
+      int16[i] = Math.max(-1, Math.min(1, data[i])) * 32767;
+    }
     return { data: this.encode(new Uint8Array(int16.buffer)), mimeType: 'audio/pcm;rate=16000' };
   }
-  private encode(bytes: Uint8Array) { let binary = ''; for (let i = 0; i < bytes.byteLength; i++) binary += String.fromCharCode(bytes[i]); return btoa(binary); }
-  private decode(base64: string) { const binaryString = atob(base64); const bytes = new Uint8Array(binaryString.length); for (let i = 0; i < binaryString.length; i++) bytes[i] = binaryString.charCodeAt(i); return bytes; }
-  private async decodeAudioData(data: Uint8Array, ctx: AudioContext, sampleRate: number, numChannels: number) {
-    const dataInt16 = new Int16Array(data.buffer); const frameCount = dataInt16.length / numChannels;
+
+  private encode(bytes: Uint8Array) {
+    let binary = '';
+    const len = bytes.byteLength;
+    for (let i = 0; i < len; i++) binary += String.fromCharCode(bytes[i]);
+    return btoa(binary);
+  }
+
+  private decode(base64: string) {
+    const binaryString = atob(base64);
+    const len = binaryString.length;
+    const bytes = new Uint8Array(len);
+    for (let i = 0; i < len; i++) bytes[i] = binaryString.charCodeAt(i);
+    return bytes;
+  }
+
+  private async decodeAudioData(data: Uint8Array, ctx: AudioContext, sampleRate: number, numChannels: number): Promise<AudioBuffer> {
+    const dataInt16 = new Int16Array(data.buffer);
+    const frameCount = dataInt16.length / numChannels;
     const buffer = ctx.createBuffer(numChannels, frameCount, sampleRate);
-    for (let c = 0; c < numChannels; c++) { const cd = buffer.getChannelData(c); for (let i = 0; i < frameCount; i++) cd[i] = dataInt16[i * numChannels + c] / 32768.0; }
+    for (let channel = 0; channel < numChannels; channel++) {
+      const channelData = buffer.getChannelData(channel);
+      for (let i = 0; i < frameCount; i++) {
+        channelData[i] = dataInt16[i * numChannels + channel] / 32768.0;
+      }
+    }
     return buffer;
   }
 }

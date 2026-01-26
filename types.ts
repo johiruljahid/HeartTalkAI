@@ -1,72 +1,71 @@
 
 export type UserRole = 'guest' | 'free' | 'premium' | 'admin';
-
+export type UserGender = 'male' | 'female';
 export type Mood = 'happy' | 'romantic' | 'calm' | 'excited' | 'sad' | 'intense' | 'default';
+export type ConversationMode = 'mentor' | 'doctor' | 'dirty' | 'default';
 
-export interface Subscription {
-  planId: string;
-  planName: string;
-  startDate: number;
-  expiryDate: number | 'unlimited';
-  status: 'active' | 'expired' | 'pending';
+export interface CreditPackage {
+    id: string;
+    name: string;
+    credits: number;
+    price: number;
 }
 
-export interface CalendarEvent {
-  id: string;
-  title: string;
-  date: string;
-  type: 'birthday' | 'meeting' | 'anniversary' | 'other';
+export const CREDIT_PACKAGES: CreditPackage[] = [
+    { id: '100c', name: 'Lite Pack', credits: 100, price: 100 },
+    { id: '300c', name: 'Pro Pack', credits: 300, price: 280 },
+    { id: '500c', name: 'Elite Pack', credits: 500, price: 450 },
+];
+
+export interface ExclusiveContent {
+    id: string;
+    type: 'image' | 'video';
+    url: string;
+    thumbnail?: string;
+    price: number;
+    description: string;
+    category: string; // e.g. 'buda', 'boobs', 'face', 'body'
 }
 
-export interface Routine {
-  id: string;
-  time: string;
-  activity: string;
+export interface MedicalPrescription {
+    id: string;
+    timestamp: number;
+    department: string;
+    problem: string;
+    history: string;
+    medicines: {
+        name: string;
+        purpose: string;
+        dose: string;
+        timing: 'Before Food' | 'After Food';
+        duration: string;
+    }[];
+    advice: string;
 }
 
-export interface Reminder {
-  id: string;
-  message: string;
-  time: string;
-  timestamp: number;
-  isCompleted: boolean;
+export interface MentorReport {
+    id: string;
+    timestamp: number;
+    mistakes: { original: string; better: string; }[];
+    vocabulary: string[];
+    advice: string;
 }
 
 export interface UserMemory {
-  notes: string[];
-  events: CalendarEvent[];
-  routines: Routine[];
-  emotions: string[];
-  reminders: Reminder[];
+  unlockedContent: string[]; // IDs of exclusive content purchased
+  prescriptions: MedicalPrescription[];
+  mentorReports: MentorReport[];
 }
 
 export interface UserProfile {
   id: string;
   name: string;
   age: string;
+  gender: UserGender;
   email?: string;
-  phone?: string; 
   role: UserRole;
-  subscription?: Subscription;
-  guestUsageCount?: number;
-  memory?: UserMemory; 
-  preferences?: {
-    theme?: 'dark' | 'light';
-    language?: 'bangla' | 'hindi' | 'english';
-  };
-}
-
-export interface PaymentRequest {
-  id: string;
-  userId: string;
-  userName: string;
-  planId: string;
-  amount: number;
-  txnId: string;
-  senderNumber: string;
-  referName?: string;
-  status: 'pending' | 'approved' | 'rejected';
-  timestamp: number;
+  credits: number; // Current credit balance
+  memory?: UserMemory;
 }
 
 export enum ConnectionState {
@@ -76,17 +75,14 @@ export enum ConnectionState {
   ERROR = 'ERROR',
 }
 
-export interface Plan {
+export interface PaymentRequest {
   id: string;
-  name: string;
-  price: number;
-  durationDays: number | 'unlimited';
+  userId: string;
+  userName: string;
+  packageId: string;
+  amount: number;
+  txnId: string;
+  senderNumber: string;
+  status: 'pending' | 'approved' | 'rejected';
+  timestamp: number;
 }
-
-export const PLANS: Plan[] = [
-  { id: '1m', name: '1 Month Plan', price: 200, durationDays: 30 },
-  { id: '3m', name: '3 Months Plan', price: 400, durationDays: 90 },
-  { id: '6m', name: '6 Months Plan', price: 650, durationDays: 180 },
-  { id: '1y', name: '1 Year Plan', price: 1000, durationDays: 365 },
-  { id: 'life', name: 'Lifetime Plan', price: 4999, durationDays: 'unlimited' },
-];

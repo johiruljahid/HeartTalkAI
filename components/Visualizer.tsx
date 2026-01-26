@@ -1,29 +1,27 @@
 
 import React, { useEffect, useRef } from 'react';
-import { Mood } from '../types';
+import { Mood, UserGender } from '../types';
 
 interface VisualizerProps {
   isActive: boolean;
   isSpeaking: boolean;
   amplitude: number;
   mood?: Mood;
+  userGender?: UserGender;
 }
 
-const Visualizer: React.FC<VisualizerProps> = ({ isActive, isSpeaking, amplitude, mood = 'default' }) => {
+const Visualizer: React.FC<VisualizerProps> = ({ isActive, isSpeaking, amplitude, mood = 'default', userGender = 'male' }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const requestRef = useRef<number>(0);
   const currentAmp = useRef(0);
   const rotationRef = useRef(0);
 
-  const moodConfigs: Record<Mood, { primary: string, secondary: string, pulseScale: number, rotationSpeed: number }> = {
-    happy: { primary: 'rgba(251, 191, 36, 0.4)', secondary: 'rgba(236, 72, 153, 0)', pulseScale: 80, rotationSpeed: 0.02 },
-    romantic: { primary: 'rgba(225, 29, 72, 0.5)', secondary: 'rgba(159, 18, 57, 0)', pulseScale: 40, rotationSpeed: 0.005 },
-    excited: { primary: 'rgba(236, 72, 153, 0.6)', secondary: 'rgba(168, 85, 247, 0)', pulseScale: 120, rotationSpeed: 0.05 },
-    calm: { primary: 'rgba(34, 197, 94, 0.3)', secondary: 'rgba(13, 148, 136, 0)', pulseScale: 30, rotationSpeed: 0.002 },
-    sad: { primary: 'rgba(59, 130, 246, 0.4)', secondary: 'rgba(30, 58, 138, 0)', pulseScale: 20, rotationSpeed: 0.001 },
-    intense: { primary: 'rgba(249, 115, 22, 0.6)', secondary: 'rgba(154, 52, 18, 0)', pulseScale: 150, rotationSpeed: 0.08 },
-    default: { primary: 'rgba(52, 211, 153, 0.3)', secondary: 'rgba(5, 150, 105, 0)', pulseScale: 60, rotationSpeed: 0.01 },
-  };
+  // Avatar URLs
+  const RIYA_IMG = "https://images.unsplash.com/photo-1621784563330-caee0b138a00?q=80&w=800&auto=format&fit=crop";
+  // Updated Smart Bangladeshi Male Avatar for Rian
+  const RIAN_IMG = "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?q=80&w=800&auto=format&fit=crop";
+  
+  const partnerAvatar = userGender === 'male' ? RIYA_IMG : RIAN_IMG;
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -31,7 +29,6 @@ const Visualizer: React.FC<VisualizerProps> = ({ isActive, isSpeaking, amplitude
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    // Responsive Canvas Resizing
     const resizeCanvas = () => {
         const dpr = window.devicePixelRatio || 1;
         const rect = canvas.getBoundingClientRect();
@@ -44,56 +41,40 @@ const Visualizer: React.FC<VisualizerProps> = ({ isActive, isSpeaking, amplitude
     window.addEventListener('resize', resizeCanvas);
 
     const animate = () => {
-      // Re-get rect inside loop if scaling changes dynamically, or rely on resize listener
       const rect = canvas.getBoundingClientRect();
-      
-      currentAmp.current += (amplitude - currentAmp.current) * 0.15;
-      const amp = isActive ? Math.max(0.05, currentAmp.current) : 0.02;
-      const config = isSpeaking && mood === 'default' 
-        ? { primary: 'rgba(236, 72, 153, 0.4)', secondary: 'rgba(168, 85, 247, 0)', pulseScale: 70, rotationSpeed: 0.02 }
-        : moodConfigs[mood];
-
       ctx.clearRect(0, 0, rect.width, rect.height);
+      
+      // Prevent rapid flickering with smoother dampening
+      currentAmp.current += (amplitude - currentAmp.current) * 0.12;
+      const amp = isActive ? Math.max(0.01, currentAmp.current) : 0;
+      
       const centerX = rect.width / 2;
       const centerY = rect.height / 2;
-      
-      // Responsive Radius based on smaller dimension
-      const minDim = Math.min(rect.width, rect.height);
-      const baseRadius = minDim * 0.35;
-      const radius = baseRadius + (amp * config.pulseScale);
+      const baseRadius = Math.min(rect.width, rect.height) * 0.35;
+      const radius = baseRadius + (amp * 90);
 
-      rotationRef.current += config.rotationSpeed;
+      rotationRef.current += 0.015;
 
       if (isActive) {
-        const gradient = ctx.createRadialGradient(centerX, centerY, baseRadius * 0.5, centerX, centerY, radius + 30);
-        gradient.addColorStop(0, config.primary);
-        gradient.addColorStop(1, config.secondary);
+        // Aesthetic Glow Effect
+        const gradient = ctx.createRadialGradient(centerX, centerY, baseRadius * 0.7, centerX, centerY, radius + 40);
+        gradient.addColorStop(0, isSpeaking ? 'rgba(236, 72, 153, 0.25)' : 'rgba(52, 211, 153, 0.15)');
+        gradient.addColorStop(1, 'rgba(0,0,0,0)');
 
         ctx.beginPath();
-        ctx.arc(centerX, centerY, radius, 0, Math.PI * 2);
+        ctx.arc(centerX, centerY, radius + 30, 0, Math.PI * 2);
         ctx.fillStyle = gradient;
         ctx.fill();
 
-        if (isSpeaking) {
-          for (let i = 0; i < 2; i++) {
-            const rippleRadius = radius + Math.sin(rotationRef.current + i) * 15;
-            ctx.beginPath();
-            ctx.arc(centerX, centerY, rippleRadius, 0, Math.PI * 2);
-            ctx.strokeStyle = config.primary.replace('0.4', '0.1').replace('0.6', '0.1').replace('0.3', '0.1');
-            ctx.lineWidth = 1;
-            ctx.stroke();
-          }
+        // Stable Orbiting Rings
+        for(let i=0; i<2; i++) {
+          ctx.beginPath();
+          ctx.arc(centerX, centerY, baseRadius + (i * 15) + (amp * 40), 0, Math.PI * 2);
+          ctx.strokeStyle = isSpeaking ? `rgba(236, 72, 153, ${0.2 - i*0.1})` : `rgba(52, 211, 153, ${0.12 - i*0.06})`;
+          ctx.lineWidth = 2;
+          ctx.stroke();
         }
       }
-
-      ctx.beginPath();
-      // Adjust stroke radius slightly for better visual
-      ctx.arc(centerX, centerY, baseRadius + (amp * 10), 0, Math.PI * 2);
-      ctx.strokeStyle = isActive 
-        ? config.primary.replace('0.4', '0.6').replace('0.3', '0.5') 
-        : 'rgba(255, 255, 255, 0.1)';
-      ctx.lineWidth = 2;
-      ctx.stroke();
 
       requestRef.current = requestAnimationFrame(animate);
     };
@@ -108,29 +89,24 @@ const Visualizer: React.FC<VisualizerProps> = ({ isActive, isSpeaking, amplitude
 
   const getBorderColor = () => {
     if (!isActive) return 'border-white/10';
-    if (mood === 'romantic') return 'border-rose-500 shadow-[0_0_40px_rgba(225,29,72,0.4)]';
-    if (mood === 'excited') return 'border-pink-400 shadow-[0_0_40px_rgba(236,72,153,0.4)]';
-    if (mood === 'happy') return 'border-amber-400 shadow-[0_0_40px_rgba(251,191,36,0.4)]';
-    return isSpeaking ? 'border-pink-500 shadow-[0_0_40px_rgba(236,72,153,0.4)]' : 'border-emerald-400 shadow-[0_0_20px_rgba(52,211,153,0.2)]';
+    return isSpeaking ? 'border-pink-500 shadow-[0_0_40px_rgba(236,72,153,0.4)]' : 'border-emerald-500 shadow-[0_0_20px_rgba(16,185,129,0.2)]';
   };
 
   return (
-    <div className="relative w-[300px] h-[300px] md:w-[400px] md:h-[400px] flex items-center justify-center">
-       {/* Central Avatar Circle */}
+    <div className="relative w-72 h-72 md:w-96 md:h-96 flex items-center justify-center transition-transform duration-700">
        <div className={`
-          absolute inset-0 m-auto w-[65%] h-[65%] rounded-full overflow-hidden 
-          border-4 z-10 transition-all duration-700
+          absolute inset-0 m-auto w-[66%] h-[66%] rounded-full overflow-hidden 
+          border-[4px] z-10 transition-all duration-1000 ease-out
           ${getBorderColor()}
-          ${isActive ? 'scale-105' : 'grayscale-[0.3]'}
+          ${isActive ? 'scale-105' : 'scale-100 grayscale-[0.2]'}
        `}>
           <img 
-            src="https://images.unsplash.com/photo-1621784563330-caee0b138a00?q=80&w=800&auto=format&fit=crop" 
-            alt="Riya" 
-            className="w-full h-full object-cover animate-breathe opacity-95"
+            src={partnerAvatar} 
+            alt="Companion Avatar" 
+            className="w-full h-full object-cover animate-breathe"
           />
-          <div className={`absolute inset-0 bg-gradient-to-t from-black/20 to-transparent pointer-events-none`}></div>
+          <div className="absolute inset-0 bg-gradient-to-t from-black/40 via-transparent to-transparent pointer-events-none"></div>
        </div>
-       {/* Canvas Layer for Glow/Ripples */}
        <canvas ref={canvasRef} className="absolute inset-0 w-full h-full z-0" />
     </div>
   );

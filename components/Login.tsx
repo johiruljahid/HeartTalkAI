@@ -1,8 +1,9 @@
 
 import React, { useState } from 'react';
-import { UserProfile } from '../types';
+import { UserProfile, UserGender } from '../types';
 import { DB } from '../services/db';
-import AdminPanel from './AdminPanel';
+// Fix: AdminPanel is a named export in AdminPanel.tsx, so it must be imported using curly braces.
+import { AdminPanel } from './AdminPanel';
 
 interface LoginProps {
   onLogin: (user: UserProfile) => void;
@@ -14,10 +15,10 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
   const [password, setPassword] = useState('');
   const [name, setName] = useState('');
   const [age, setAge] = useState('');
+  const [gender, setGender] = useState<UserGender>('male');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   
-  // State to toggle Admin Panel
   const [showAdmin, setShowAdmin] = useState(false);
 
   const handleGuestAccess = async () => {
@@ -27,12 +28,8 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
         const guestUser = await DB.loginAsGuest();
         onLogin(guestUser);
     } catch (err: any) {
-        console.error("Guest Login Error:", err);
-        // Specifically catch the "operation not allowed" error which happens if Anonymous auth is disabled
         if (err.code === 'auth/operation-not-allowed') {
-            setError("Admin Error: Please enable 'Anonymous' sign-in in Firebase Console > Authentication > Sign-in method.");
-        } else if (err.code === 'auth/network-request-failed') {
-            setError("Network error. Please check your internet.");
+            setError("Admin Error: Enable Anonymous sign-in.");
         } else {
             setError(`Guest login failed: ${err.message}`);
         }
@@ -56,131 +53,96 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
             const newUser = await DB.register(email, password, {
                 name: name.trim(),
                 age: age.trim(),
+                gender: gender,
             });
             onLogin(newUser);
         }
     } catch (err: any) {
-        let msg = err.message;
-        if (msg.includes('auth/invalid-credential')) msg = "Incorrect email or password.";
-        if (msg.includes('auth/email-already-in-use')) msg = "Email already registered. Try logging in.";
-        if (msg.includes('auth/weak-password')) msg = "Password should be at least 6 characters.";
-        setError(msg);
+        setError(err.message);
         setLoading(false);
     }
   };
 
   return (
-    <div className="min-h-screen w-full flex flex-col items-center justify-center p-6 bg-black overflow-hidden relative">
-      {/* Background Image */}
-      <div 
-        className="absolute inset-0 bg-cover bg-center opacity-80 blur-[1px] transition-all duration-1000 scale-105"
-        style={{ backgroundImage: "url('https://i.ibb.co.com/0VzDsHWv/login-bg-jpg.jpg')" }}
-      ></div>
-
-      {/* Light Overlay */}
-      <div className="absolute inset-0 bg-black/40 backdrop-blur-[1px] z-0"></div>
-
-      <div className="relative z-10 w-full max-w-md flex flex-col items-center">
-        {/* Logo Area */}
-        <div className="mb-8 text-center">
-           <div className="mx-auto w-24 h-24 rounded-full border-2 border-pink-400/30 overflow-hidden mb-4 shadow-[0_0_30px_rgba(236,72,153,0.3)] animate-pulse-ring">
-              <img src="https://images.unsplash.com/photo-1621784563330-caee0b138a00?q=80&w=800&auto=format&fit=crop" className="w-full h-full object-cover" />
-          </div>
-          <h1 className="text-4xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-pink-200 to-purple-200 tracking-tight">Riya</h1>
-          <p className="text-pink-200/80 text-sm tracking-widest uppercase mt-2 font-semibold">Personal AI Companion</p>
+    <div className="min-h-screen w-full flex items-center justify-center p-6 relative overflow-hidden">
+      
+      {/* Main Card */}
+      <div className="w-full max-w-[400px] animate-fade-in-up relative z-10">
+        
+        {/* Logo/Brand */}
+        <div className="text-center mb-8">
+           <div className="w-24 h-24 mx-auto rounded-[2rem] bg-white/10 backdrop-blur-md p-2 shadow-2xl mb-4 border border-white/20 animate-float">
+              <div className="w-full h-full rounded-[1.5rem] overflow-hidden relative">
+                 <img src="https://images.unsplash.com/photo-1621784563330-caee0b138a00?q=80&w=300&auto=format&fit=crop" className="w-full h-full object-cover" alt="Logo" />
+              </div>
+           </div>
+           <h1 className="text-5xl font-extrabold tracking-tight text-white drop-shadow-lg">HeartTalk</h1>
+           <p className="text-white/60 text-sm font-bold tracking-widest uppercase mt-2">AI Soulmate Interface</p>
         </div>
 
-        {/* Card */}
-        <div className="w-full bg-black/40 border border-white/20 rounded-3xl p-8 backdrop-blur-md shadow-2xl">
-          <div className="flex mb-6 border-b border-white/10 pb-2">
+        {/* Glass Form - Dark Glass */}
+        <div className="glass-card rounded-[2.5rem] p-8 relative overflow-hidden shadow-2xl">
+          
+          {/* Toggle */}
+          <div className="flex bg-black/40 p-1.5 rounded-2xl mb-6 border border-white/10">
             <button 
               onClick={() => setMode('login')} 
-              className={`flex-1 pb-2 text-center font-medium transition-colors ${mode === 'login' ? 'text-pink-400 border-b-2 border-pink-400' : 'text-gray-400'}`}
+              className={`flex-1 py-3 text-xs font-bold uppercase tracking-wider rounded-xl transition-all ${mode === 'login' ? 'bg-white/20 text-white shadow-lg ring-1 ring-white/10' : 'text-white/40 hover:text-white hover:bg-white/5'}`}
             >
               Login
             </button>
             <button 
               onClick={() => setMode('register')} 
-              className={`flex-1 pb-2 text-center font-medium transition-colors ${mode === 'register' ? 'text-pink-400 border-b-2 border-pink-400' : 'text-gray-400'}`}
+              className={`flex-1 py-3 text-xs font-bold uppercase tracking-wider rounded-xl transition-all ${mode === 'register' ? 'bg-white/20 text-white shadow-lg ring-1 ring-white/10' : 'text-white/40 hover:text-white hover:bg-white/5'}`}
             >
-              Register
+              Sign Up
             </button>
           </div>
 
           <form onSubmit={handleSubmit} className="flex flex-col gap-4">
             {mode === 'register' && (
-              <>
-                <input 
-                  type="text" value={name} onChange={(e) => setName(e.target.value)}
-                  className="bg-black/30 border border-white/10 rounded-xl px-4 py-3 text-white placeholder-gray-500 focus:outline-none focus:border-pink-500/50 transition-colors"
-                  placeholder="Your Name"
-                />
-                <input 
-                  type="number" value={age} onChange={(e) => setAge(e.target.value)}
-                  className="bg-black/30 border border-white/10 rounded-xl px-4 py-3 text-white placeholder-gray-500 focus:outline-none focus:border-pink-500/50 transition-colors"
-                  placeholder="Age"
-                />
-              </>
+              <div className="animate-fade-in-up space-y-4">
+                <div className="grid grid-cols-2 gap-4">
+                    <input type="text" value={name} onChange={(e) => setName(e.target.value)} className="glass-input w-full rounded-2xl px-5 py-3.5 text-sm font-bold outline-none" placeholder="Name" />
+                    <input type="number" value={age} onChange={(e) => setAge(e.target.value)} className="glass-input w-full rounded-2xl px-5 py-3.5 text-sm font-bold outline-none" placeholder="Age" />
+                </div>
+                <div className="flex gap-3">
+                    <button type="button" onClick={() => setGender('male')} className={`flex-1 py-3.5 rounded-2xl text-[10px] font-black uppercase border transition-all ${gender === 'male' ? 'bg-blue-500/20 border-blue-500/50 text-blue-300' : 'bg-transparent border-white/10 text-white/40 hover:bg-white/5'}`}>MALE</button>
+                    <button type="button" onClick={() => setGender('female')} className={`flex-1 py-3.5 rounded-2xl text-[10px] font-black uppercase border transition-all ${gender === 'female' ? 'bg-pink-500/20 border-pink-500/50 text-pink-300' : 'bg-transparent border-white/10 text-white/40 hover:bg-white/5'}`}>FEMALE</button>
+                </div>
+              </div>
             )}
             
-            <input 
-              type="email" value={email} onChange={(e) => setEmail(e.target.value)}
-              className="bg-black/30 border border-white/10 rounded-xl px-4 py-3 text-white placeholder-gray-500 focus:outline-none focus:border-pink-500/50 transition-colors"
-              placeholder="Email Address"
-            />
-            <input 
-              type="password" value={password} onChange={(e) => setPassword(e.target.value)}
-              className="bg-black/30 border border-white/10 rounded-xl px-4 py-3 text-white placeholder-gray-500 focus:outline-none focus:border-pink-500/50 transition-colors"
-              placeholder="Password"
-            />
+            <div className="space-y-4">
+                <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} className="glass-input w-full rounded-2xl px-5 py-4 text-sm font-bold outline-none" placeholder="Email Address" />
+                <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} className="glass-input w-full rounded-2xl px-5 py-4 text-sm font-bold outline-none" placeholder="Password" />
+            </div>
 
-            {error && <p className="text-red-400 text-xs text-center bg-red-900/20 p-2 rounded border border-red-500/20">{error}</p>}
+            {error && <div className="text-white text-xs font-bold text-center bg-rose-500/80 py-3 rounded-xl shadow-lg animate-pulse">{error}</div>}
 
-            <button 
-              type="submit"
-              disabled={loading}
-              className={`mt-2 w-full bg-gradient-to-r from-pink-600 to-purple-600 text-white font-bold py-3.5 rounded-xl shadow-lg active:scale-95 transition-transform flex items-center justify-center gap-2 ${loading ? 'opacity-70 cursor-not-allowed' : ''}`}
-            >
-              {loading && <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>}
-              {mode === 'login' ? 'Unlock Riya' : 'Create Account'}
+            <button type="submit" disabled={loading} className="mt-4 w-full bg-white text-black font-black text-sm py-4 rounded-2xl hover:bg-gray-200 active:scale-[0.98] transition-all shadow-xl flex items-center justify-center uppercase tracking-wider">
+              {loading ? <div className="w-5 h-5 border-2 border-black/30 border-t-black rounded-full animate-spin"></div> : (mode === 'login' ? 'Start Journey' : 'Create Bond')}
             </button>
           </form>
 
-          <div className="mt-6 flex items-center justify-between">
-             <div className="h-px bg-white/10 flex-1"></div>
-             <span className="px-4 text-xs text-gray-500">OR</span>
-             <div className="h-px bg-white/10 flex-1"></div>
+          <div className="mt-6 flex items-center gap-4">
+              <div className="h-px flex-1 bg-white/10"></div>
+              <span className="text-[10px] text-white/40 font-black uppercase tracking-widest">Or</span>
+              <div className="h-px flex-1 bg-white/10"></div>
           </div>
 
-          <button 
-            onClick={handleGuestAccess}
-            disabled={loading}
-            className="mt-6 w-full bg-white/5 border border-white/10 hover:bg-white/10 text-gray-300 font-medium py-3 rounded-xl transition-colors text-sm flex items-center justify-center gap-2 group"
-          >
-             {loading ? (
-                <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
-             ) : (
-                <>
-                  <span>Continue as Guest</span>
-                  <span className="text-xs bg-white/10 px-2 py-0.5 rounded text-gray-400 group-hover:text-white transition-colors">No Account</span>
-                </>
-             )}
+          <button onClick={handleGuestAccess} disabled={loading} className="mt-4 w-full bg-white/5 hover:bg-white/10 text-white font-bold py-3.5 rounded-2xl transition-all text-xs uppercase tracking-widest border border-white/10 shadow-sm">
+             Enter as Guest
           </button>
         </div>
+        
+        <p className="text-center mt-8">
+            <button onClick={() => setShowAdmin(true)} className="text-[10px] text-white/30 hover:text-white/60 font-black uppercase tracking-[0.2em] transition-colors">
+                System Access
+            </button>
+        </p>
       </div>
 
-      {/* ADMIN BUTTON (Discrete) */}
-      <button 
-        onClick={() => setShowAdmin(true)}
-        className="absolute bottom-6 right-6 text-gray-500 hover:text-gray-300 text-xs uppercase tracking-widest z-20 flex items-center gap-2 transition-colors"
-      >
-        <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
-        </svg>
-        Admin Panel
-      </button>
-
-      {/* Render Admin Panel Overlay */}
       {showAdmin && <AdminPanel onClose={() => setShowAdmin(false)} />}
     </div>
   );

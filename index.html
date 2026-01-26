@@ -3,62 +3,117 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
-    <meta name="theme-color" content="#0f0c29" />
+    <meta name="theme-color" content="#000000" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="mobile-web-app-capable" content="yes">
-    <title>Riya - AI Companion</title>
+    <title>HeartTalk - Soul Connection</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <link href="https://fonts.googleapis.com/css2?family=Quicksand:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     <style>
       body {
-        font-family: 'Quicksand', sans-serif;
-        background-color: #0f0c29; 
-        background-image: linear-gradient(180deg, #0f0c29 0%, #302b63 50%, #24243e 100%);
-        color: white;
+        font-family: 'Plus Jakarta Sans', sans-serif;
+        background: #020617; /* Deepest Slate/Black */
+        color: #ffffff;
         height: 100vh;
         width: 100vw;
         overflow: hidden;
         overscroll-behavior: none;
         -webkit-tap-highlight-color: transparent;
       }
+
+      /* AI COLOR BACKGROUND */
+      .bg-shapes {
+        position: fixed;
+        inset: 0;
+        z-index: -1;
+        overflow: hidden;
+        background: #000000;
+      }
+
+      .shape-blob {
+        position: absolute;
+        border-radius: 50%;
+        filter: blur(60px); /* Soft glow */
+        opacity: 0.6;
+        animation: floatShape 20s infinite alternate cubic-bezier(0.4, 0, 0.2, 1);
+        mix-blend-mode: screen; /* Vibrant blend */
+      }
+
+      /* AI Color Palette: Cyan, Magenta, Violet, Blue */
+      .blob-1 { top: -10%; left: -10%; width: 50vw; height: 50vw; background: #4f46e5; animation-delay: 0s; } /* Indigo */
+      .blob-2 { top: 20%; right: -20%; width: 60vw; height: 60vw; background: #ec4899; animation-delay: -5s; } /* Pink */
+      .blob-3 { bottom: -20%; left: 20%; width: 55vw; height: 55vw; background: #06b6d4; animation-delay: -10s; } /* Cyan */
+      .blob-4 { bottom: 10%; right: 10%; width: 40vw; height: 40vw; background: #8b5cf6; animation-delay: -15s; } /* Violet */
+      .blob-5 { top: 40%; left: 30%; width: 30vw; height: 30vw; background: #22d3ee; animation-delay: -8s; opacity: 0.4; } /* Light Cyan */
+
+      @keyframes floatShape {
+        0% { transform: translate(0, 0) scale(1) rotate(0deg); }
+        33% { transform: translate(30px, -50px) scale(1.1) rotate(10deg); }
+        66% { transform: translate(-20px, 20px) scale(0.9) rotate(-5deg); }
+        100% { transform: translate(0, 0) scale(1) rotate(0deg); }
+      }
+
+      /* Noise Overlay */
+      .bg-shapes::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background-image: url("https://grainy-gradients.vercel.app/noise.svg");
+        opacity: 0.07;
+        mix-blend-mode: overlay;
+        pointer-events: none;
+      }
+
+      /* GLASS UI - Dark Mode Version */
+      .glass-card {
+        background: rgba(255, 255, 255, 0.08); /* Frosted White on Dark */
+        backdrop-filter: blur(24px);
+        -webkit-backdrop-filter: blur(24px);
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.3);
+      }
       
-      @keyframes breathe {
-        0% { transform: scale(1); }
-        50% { transform: scale(1.03); }
-        100% { transform: scale(1); }
-      }
-      .animate-breathe {
-        animation: breathe 4s ease-in-out infinite;
+      .glass-panel {
+        background: rgba(0, 0, 0, 0.4); 
+        backdrop-filter: blur(20px);
+        -webkit-backdrop-filter: blur(20px);
+        border: 1px solid rgba(255, 255, 255, 0.1);
       }
 
-      @keyframes pulse-ring {
-        0% { transform: scale(0.8); opacity: 0.5; }
-        100% { transform: scale(1.3); opacity: 0; }
+      .glass-input {
+        background: rgba(0, 0, 0, 0.3);
+        border: 1px solid rgba(255, 255, 255, 0.15);
+        color: white;
+        transition: all 0.3s ease;
       }
-      .animate-pulse-ring {
-        animation: pulse-ring 2s cubic-bezier(0.215, 0.61, 0.355, 1) infinite;
-      }
-
-      /* Custom scrollbar for mobile */
-      .custom-scrollbar::-webkit-scrollbar {
-        width: 4px;
-      }
-      .custom-scrollbar::-webkit-scrollbar-track {
-        background: rgba(255, 255, 255, 0.05);
-      }
-      .custom-scrollbar::-webkit-scrollbar-thumb {
-        background: rgba(236, 72, 153, 0.3);
-        border-radius: 10px;
+      .glass-input::placeholder { color: rgba(255, 255, 255, 0.4); font-weight: 500; }
+      .glass-input:focus {
+        background: rgba(0, 0, 0, 0.5);
+        border-color: rgba(255, 255, 255, 0.4);
+        box-shadow: 0 0 0 4px rgba(255, 255, 255, 0.05);
       }
 
-      .animate-fade-in {
-        animation: fadeIn 0.3s ease-out forwards;
+      /* ANIMATIONS */
+      .animate-float { animation: float 6s ease-in-out infinite; }
+      @keyframes float {
+        0% { transform: translateY(0px); }
+        50% { transform: translateY(-10px); }
+        100% { transform: translateY(0px); }
       }
-      @keyframes fadeIn {
-        from { opacity: 0; transform: translateY(10px); }
-        to { opacity: 1; transform: translateY(0); }
+
+      .animate-fade-in-up { animation: fadeInUp 0.7s cubic-bezier(0.2, 0.8, 0.2, 1) forwards; }
+      @keyframes fadeInUp {
+        from { opacity: 0; transform: translateY(30px) scale(0.95); }
+        to { opacity: 1; transform: translateY(0) scale(1); }
       }
+      
+      .animate-fade-in { animation: fadeIn 0.5s ease-out forwards; }
+      @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+
+      .custom-scrollbar::-webkit-scrollbar { width: 4px; }
+      .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+      .custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.2); border-radius: 4px; }
     </style>
 <script type="importmap">
 {
@@ -75,6 +130,13 @@
 </script>
 </head>
   <body>
+    <div class="bg-shapes">
+        <div class="shape-blob blob-1"></div>
+        <div class="shape-blob blob-2"></div>
+        <div class="shape-blob blob-3"></div>
+        <div class="shape-blob blob-4"></div>
+        <div class="shape-blob blob-5"></div>
+    </div>
     <div id="root"></div>
     <script type="module" src="/index.tsx"></script>
   </body>

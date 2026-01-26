@@ -1,19 +1,9 @@
-import { UserProfile, PaymentRequest, PLANS } from '../types';
-import { initializeApp, getApps } from 'firebase/app';
-import { getDatabase, ref, set, onValue, get, Database } from 'firebase/database';
-import { 
-  getAuth, 
-  signInWithEmailAndPassword, 
-  createUserWithEmailAndPassword, 
-  signOut, 
-  onAuthStateChanged,
-  signInAnonymously,
-  Auth,
-  User
-} from 'firebase/auth';
-import { getAnalytics } from "firebase/analytics";
 
-// 🔥 FIREBASE CONFIGURATION 🔥
+import { UserProfile, PaymentRequest, CREDIT_PACKAGES, ExclusiveContent } from '../types';
+import { initializeApp, getApps } from 'firebase/app';
+import { getDatabase, ref, set, onValue, get, Database, update, push } from 'firebase/database';
+import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged, signInAnonymously, Auth } from 'firebase/auth';
+
 const firebaseConfig = {
   apiKey: "AIzaSyDGgSqp4Fi5C0ZZ_zVgC7R69MnJXySE3G8",
   authDomain: "hearttalkai-bec2d.firebaseapp.com",
@@ -21,214 +11,89 @@ const firebaseConfig = {
   projectId: "hearttalkai-bec2d",
   storageBucket: "hearttalkai-bec2d.firebasestorage.app",
   messagingSenderId: "967489891910",
-  appId: "1:967489891910:web:184556e84c5944e28be447",
-  measurementId: "G-93NXYGMHMD"
+  appId: "1:967489891910:web:184556e84c5944e28be447"
 };
-
-// Internal Cache for Admin/Sync
-let CACHE_USERS: UserProfile[] = [];
-let CACHE_PAYMENTS: PaymentRequest[] = [];
-let db: Database;
-let auth: Auth;
 
 const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0];
-try { getAnalytics(app); } catch (e) {}
+const db = getDatabase(app);
+const auth = getAuth(app);
 
-db = getDatabase(app);
-auth = getAuth(app);
-console.log("🔥 Firebase Auth & DB Connected");
-
-// Helper: Ensure Schema
-const ensureSchemaIntegrity = (user: UserProfile): UserProfile => {
-  const defaultMemory = { notes: [], events: [], routines: [], emotions: [], reminders: [] };
-  const defaultPreferences = { theme: 'dark', language: 'bangla' };
-  
-  return {
-    ...user,
-    role: user.role || 'free',
-    guestUsageCount: user.guestUsageCount ?? 0,
-    memory: { ...defaultMemory, ...(user.memory || {}) },
-    preferences: { ...defaultPreferences, ...(user.preferences || {}) }
-  } as UserProfile;
-};
-
-// --- REALTIME LISTENERS (For Admin & caching) ---
-onValue(ref(db, 'users'), (snapshot) => {
-  const data = snapshot.val();
-  if (data) {
-    CACHE_USERS = Object.values(data).map((u: any) => ensureSchemaIntegrity(u));
-    window.dispatchEvent(new Event('riya-sync'));
-  }
+const ensureSchema = (u: any): UserProfile => ({
+    ...u,
+    credits: u.credits ?? 0,
+    memory: { 
+        unlockedContent: u.memory?.unlockedContent || [],
+        prescriptions: u.memory?.prescriptions || [],
+        mentorReports: u.memory?.mentorReports || []
+    }
 });
-
-onValue(ref(db, 'payments'), (snapshot) => {
-  const data = snapshot.val();
-  if (data) {
-    CACHE_PAYMENTS = Object.values(data);
-    window.dispatchEvent(new Event('riya-sync'));
-  }
-});
-
-// --- EXPORTED API ---
 
 export const DB = {
-  // --- AUTHENTICATION ---
-  
-  // Login with Email/Pass
-  login: async (email: string, pass: string): Promise<UserProfile> => {
-    const cred = await signInWithEmailAndPassword(auth, email, pass);
-    const uid = cred.user.uid;
-    
-    // Fetch profile immediately
-    const snapshot = await get(ref(db, `users/${uid}`));
-    if (snapshot.exists()) {
-        return ensureSchemaIntegrity(snapshot.val());
-    } else {
-        throw new Error("Profile not found");
-    }
+  login: async (e: string, p: string) => {
+    const cred = await signInWithEmailAndPassword(auth, e, p);
+    const snap = await get(ref(db, `users/${cred.user.uid}`));
+    return ensureSchema(snap.val());
   },
-
-  // Register with Email/Pass
-  register: async (email: string, pass: string, profileData: Omit<UserProfile, 'id' | 'role'>): Promise<UserProfile> => {
-    const cred = await createUserWithEmailAndPassword(auth, email, pass);
-    const uid = cred.user.uid;
-
-    const newUser: UserProfile = {
-        ...profileData,
-        id: uid,
-        email: email,
-        role: 'free',
-        guestUsageCount: 0,
-        memory: { notes: [], events: [], routines: [], emotions: [], reminders: [] }
-    };
-
-    await set(ref(db, `users/${uid}`), newUser);
-    return ensureSchemaIntegrity(newUser);
+  register: async (e: string, p: string, data: any) => {
+    const cred = await createUserWithEmailAndPassword(auth, e, p);
+    const user = { ...data, id: cred.user.uid, email: e, role: 'free', credits: 10 };
+    await set(ref(db, `users/${cred.user.uid}`), user);
+    return ensureSchema(user);
   },
-
-  // Guest Access (Anonymous Auth)
-  loginAsGuest: async (): Promise<UserProfile> => {
+  loginAsGuest: async () => {
     const cred = await signInAnonymously(auth);
-    const uid = cred.user.uid;
-    
-    const snapshot = await get(ref(db, `users/${uid}`));
-    if (snapshot.exists()) {
-        return ensureSchemaIntegrity(snapshot.val());
-    } else {
-        // Create Guest Profile
-        const guestUser: UserProfile = {
-            id: uid,
-            name: 'Guest User',
-            age: '25',
-            role: 'guest',
-            guestUsageCount: 0,
-            memory: { notes: [], events: [], routines: [], emotions: [], reminders: [] }
-        };
-        await set(ref(db, `users/${uid}`), guestUser);
-        return guestUser;
-    }
+    const user = { id: cred.user.uid, name: 'Guest', age: '25', gender: 'male', role: 'guest', credits: 5 };
+    await set(ref(db, `users/${cred.user.uid}`), user);
+    return ensureSchema(user);
   },
-
-  logout: async () => {
-    await signOut(auth);
+  logout: () => signOut(auth),
+  subscribeToAuth: (cb: any) => onAuthStateChanged(auth, async (u) => {
+    if (u) { const s = await get(ref(db, `users/${u.uid}`)); cb(ensureSchema(s.val())); } else cb(null);
+  }),
+  updateUser: (u: UserProfile) => {
+    set(ref(db, `users/${u.id}`), u);
+    window.dispatchEvent(new CustomEvent('riya-sync'));
   },
-
-  // Auth State Observer
-  subscribeToAuth: (callback: (user: UserProfile | null) => void) => {
-    return onAuthStateChanged(auth, async (firebaseUser) => {
-        if (firebaseUser) {
-            const snapshot = await get(ref(db, `users/${firebaseUser.uid}`));
-            if (snapshot.exists()) {
-                callback(ensureSchemaIntegrity(snapshot.val()));
-            } else {
-                // Edge case: Auth exists but DB record missing
-                callback(null); 
-            }
-        } else {
-            callback(null);
-        }
-    });
+  deductCredits: async (uid: string, amount: number) => {
+    const snap = await get(ref(db, `users/${uid}/credits`));
+    const current = snap.val() || 0;
+    if (current < amount) throw new Error("Insufficient Credits");
+    await set(ref(db, `users/${uid}/credits`), current - amount);
+    window.dispatchEvent(new CustomEvent('riya-sync'));
   },
-
-  // --- DATABASE OPERATIONS ---
-
-  updateUser: (updatedUser: UserProfile) => {
-    // Only update if ID exists
-    if (!updatedUser.id) return;
-    const clean = ensureSchemaIntegrity(updatedUser);
-    set(ref(db, `users/${updatedUser.id}`), clean).catch(e => console.error("Sync Error", e));
+  createPaymentRequest: async (req: PaymentRequest) => {
+    await set(ref(db, `payments/${req.id}`), req);
   },
-
-  getUserById: (id: string): UserProfile | null => {
-    const u = CACHE_USERS.find(u => u.id === id);
-    return u ? ensureSchemaIntegrity(u) : null;
-  },
-
-  getAllUsers: () => [...CACHE_USERS],
-  getAllPayments: () => [...CACHE_PAYMENTS],
-  getPaymentsByUserId: (uid: string) => CACHE_PAYMENTS.filter(p => p.userId === uid),
-
-  createPaymentRequest: (req: PaymentRequest) => {
-    set(ref(db, `payments/${req.id}`), req);
-
-    // Optimistic user update
-    const user = CACHE_USERS.find(u => u.id === req.userId);
-    if (user) {
-      user.subscription = {
-        planId: req.planId,
-        planName: PLANS.find(p => p.id === req.planId)?.name || 'Plan',
-        startDate: Date.now(),
-        expiryDate: 0,
-        status: 'pending'
-      };
-      set(ref(db, `users/${user.id}`), user);
-    }
-  },
-
-  approvePayment: (paymentId: string) => {
-    const p = CACHE_PAYMENTS.find(pay => pay.id === paymentId);
-    if (!p) return;
-    
-    const updatedPayment = { ...p, status: 'approved' as const };
-    set(ref(db, `payments/${paymentId}`), updatedPayment);
-
-    const user = CACHE_USERS.find(u => u.id === p.userId);
-    if (user) {
-      const plan = PLANS.find(pl => pl.id === p.planId);
-      if (plan) {
-        const updatedUser: UserProfile = {
-            ...user,
-            role: 'premium',
-            subscription: {
-                planId: plan.id,
-                planName: plan.name,
-                startDate: Date.now(),
-                expiryDate: plan.durationDays === 'unlimited' ? 'unlimited' : Date.now() + (plan.durationDays * 86400000),
-                status: 'active'
-            }
-        };
-        set(ref(db, `users/${user.id}`), updatedUser);
+  approvePayment: async (id: string) => {
+    const snap = await get(ref(db, `payments/${id}`));
+    if (snap.exists()) {
+      const p = snap.val() as PaymentRequest;
+      const pack = CREDIT_PACKAGES.find(cp => cp.id === p.packageId);
+      if (pack) {
+        const uSnap = await get(ref(db, `users/${p.userId}`));
+        const user = uSnap.val();
+        await update(ref(db, `users/${p.userId}`), { credits: (user.credits || 0) + pack.credits });
+        await update(ref(db, `payments/${id}`), { status: 'approved' });
+        window.dispatchEvent(new CustomEvent('riya-sync'));
       }
     }
   },
-
-  rejectPayment: (paymentId: string) => {
-    const p = CACHE_PAYMENTS.find(pay => pay.id === paymentId);
-    if (!p) return;
-    
-    set(ref(db, `payments/${paymentId}`), { ...p, status: 'rejected' });
-
-    const user = CACHE_USERS.find(u => u.id === p.userId);
-    if (user && user.subscription?.status === 'pending') {
-       // Remove pending status
-       const updatedUser = { ...user, subscription: undefined };
-       set(ref(db, `users/${user.id}`), updatedUser);
-    }
+  rejectPayment: (id: string) => update(ref(db, `payments/${id}`), { status: 'rejected' }),
+  getAllExclusiveContent: async (): Promise<ExclusiveContent[]> => {
+    const snap = await get(ref(db, 'content'));
+    return snap.exists() ? Object.values(snap.val()) : [];
   },
-
-  clearAll: () => {
-    alert("Please use Firebase Console to wipe data. Local cache will be cleared on refresh.");
-    localStorage.clear();
-    window.location.reload();
+  uploadContent: (c: ExclusiveContent) => set(ref(db, `content/${c.id}`), c),
+  getUserById: async (id: string) => {
+    const s = await get(ref(db, `users/${id}`));
+    return s.exists() ? ensureSchema(s.val()) : null;
+  },
+  getAllUsers: async () => {
+    const s = await get(ref(db, 'users'));
+    return s.exists() ? Object.values(s.val()) : [];
+  },
+  getAllPayments: async () => {
+    const s = await get(ref(db, 'payments'));
+    return s.exists() ? Object.values(s.val()) : [];
   }
 };

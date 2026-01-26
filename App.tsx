@@ -11,7 +11,7 @@ const App: React.FC = () => {
 
   useEffect(() => {
     // Subscribe to Firebase Auth State
-    const unsubscribe = DB.subscribeToAuth((authUser) => {
+    const unsubscribe = DB.subscribeToAuth((authUser: UserProfile | null) => {
         // If authUser is found via listener, update state.
         // If it returns null (e.g. initial load or logout), set null.
         setUser(authUser);
@@ -19,9 +19,10 @@ const App: React.FC = () => {
     });
 
     // Also listen for profile updates (e.g. admin approval)
-    const sync = () => {
+    // Updated to be async to handle DB.getUserById returning a Promise
+    const sync = async () => {
         if (user) {
-            const fresh = DB.getUserById(user.id);
+            const fresh = await DB.getUserById(user.id);
             if (fresh) setUser(fresh);
         }
     };
